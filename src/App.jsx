@@ -7,17 +7,12 @@ import {
   XCircle, Tag, ImagePlus, ChevronLeft, ChevronRight, MonitorSmartphone, AlertTriangle 
 } from 'lucide-react';
 
-// Import your organized components
 import Navbar from './components/Navbar';
 import AlertToast from './components/AlertToast';
 import AuctionCard from './components/AuctionCard';
 
-// ==========================================
-// 1. FIREBASE CONFIGURATION
-// ==========================================
-// PUT YOUR REAL FIREBASE KEYS HERE:
 const firebaseConfig = {
-   apiKey: "AIzaSyDB2C2dqq0nH0wB1_PeOwZJXvFhWg1KcgU",
+  apiKey: "AIzaSyDB2C2dqq0nH0wB1_PeOwZJXvFhWg1KcgU",
   authDomain: "gen-lang-client-0725669809.firebaseapp.com",
   projectId: "gen-lang-client-0725669809",
   storageBucket: "gen-lang-client-0725669809.firebasestorage.app",
@@ -25,18 +20,12 @@ const firebaseConfig = {
   appId: "1:898837999277:web:c42fb2e5bd131bbf56e024",
   measurementId: "G-WB26WRGXTF"
 };
-// 🚀 THE LAZY IMPORT
-const AdminPanel = lazy(() => import('./components/AdminPanel'));
 
-// Initialize Firebase
+const AdminPanel = lazy(() => import('./components/AdminPanel'));
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'supamoto-auction-2026';
-
-// ==========================================
-// 2. MAIN APPLICATION
-// ==========================================
 
 export default function App() {
   const colors = { tangerine: '#F58202', mossGreen: '#336021', auburn: '#9E2A2B', cornsilk: '#F9EDCC' };
@@ -53,7 +42,6 @@ export default function App() {
   const [expandedImage, setExpandedImage] = useState(null);
   const [appSettings, setAppSettings] = useState({ loginBg: null });
   const [bgPreview, setBgPreview] = useState(null);
-
   const [categories, setCategories] = useState(['Cookstoves', 'Fuel', 'Solar', 'General']);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -61,21 +49,31 @@ export default function App() {
   const [imagePreview, setImagePreview] = useState(null);
   const [imagePreview2, setImagePreview2] = useState(null);
   const [editingItemId, setEditingItemId] = useState(null);
-
   const [showTerms, setShowTerms] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [pendingUser, setPendingUser] = useState(null);
+  const [timeLeft, setTimeLeft] = useState("");
 
-  // --- Initialization ---
+  // --- Timer Helper ---
+  const calculateTimeLeft = (target) => {
+    if (!target) return null;
+    const difference = target - Date.now();
+    if (difference <= 0) return "AUCTION CLOSED";
+    const hours = Math.floor(difference / (1000 * 60 * 60));
+    const mins = Math.floor((difference / 1000 / 60) % 60);
+    const secs = Math.floor((difference / 1000) % 60);
+    return `${hours.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
+  };
+
+  // --- Initialization & Database Listeners ---
   useEffect(() => {
     const link = document.createElement('link');
-    link.href = '[https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap](https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap)';
+    link.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap';
     link.rel = 'stylesheet';
     document.head.appendChild(link);
 
     const initAuth = async () => { try { await signInAnonymously(auth); } catch(e){} };
     initAuth();
-    onAuthStateChanged(auth, () => {});
 
     const unsubItems = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'items'), (snap) => {
       setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt));
@@ -94,42 +92,35 @@ export default function App() {
     return () => { document.head.removeChild(link); unsubItems(); unsubCat(); unsubUsers(); unsubSettings(); };
   }, []);
 
+  // --- Timer Tick ---
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeLeft(calculateTimeLeft(appSettings?.auctionEnd));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [appSettings?.auctionEnd]);
+
+  // --- Handlers ---
   const showAlert = (message, type = 'info') => {
     const id = Date.now();
     setAlerts(prev => [...prev, { id, message, type }]);
     setTimeout(() => setAlerts(prev => prev.filter(a => a.id !== id)), 4000);
   };
 
- const handleLogin = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     const enteredName = loginForm.name.trim();
     const enteredPassword = loginForm.password.trim();
-
-    if (!enteredName || !enteredPassword) {
-      return showAlert("Please enter both name and password.", "error");
-    }
-
-    // Search the users list we already have from Firestore
+    if (!enteredName || !enteredPassword) return showAlert("Please enter both name and password.", "error");
     const existingUser = dbUsers.find(u => u.name.toLowerCase() === enteredName.toLowerCase());
-
     if (existingUser) {
-      // Check if the password matches the one in the DB
       if (existingUser.password === enteredPassword) {
-        // Log them in with the role assigned in the DB (admin or user)
         setUser({ name: existingUser.name, role: existingUser.role });
         showAlert(`Welcome ${existingUser.role === 'admin' ? 'Master' : 'back'}!`, "success");
-      } else {
-        showAlert("Incorrect password.", "error");
-      }
+      } else { showAlert("Incorrect password.", "error"); }
     } else {
-      // If the user doesn't exist, we treat them as a new bidder
-      // Note: We block the 'Admin' toggle from creating new admin accounts
-      if (loginForm.isAdmin) {
-        showAlert("Admin credentials not recognized.", "error");
-      } else {
-        setPendingUser({ name: enteredName, password: enteredPassword });
-        setShowTerms(true);
-      }
+      if (loginForm.isAdmin) { showAlert("Admin account not found.", "error"); } 
+      else { setPendingUser({ name: enteredName, password: enteredPassword }); setShowTerms(true); }
     }
   };
 
@@ -159,13 +150,8 @@ export default function App() {
     e.preventDefault();
     try {
       const data = { ...newItem, startPrice: parseFloat(newItem.startPrice), faultDescription: newItem.isFaulty ? newItem.faultDescription : '' };
-      if (editingItemId) {
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', editingItemId), data);
-        showAlert("Item updated!", "success");
-      } else {
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'items'), { ...data, currentBid: 0, topBidder: null, status: "open", bids: [], createdAt: Date.now() });
-        showAlert("Item added!", "success");
-      }
+      if (editingItemId) { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', editingItemId), data); showAlert("Item updated!", "success"); } 
+      else { await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'items'), { ...data, currentBid: 0, topBidder: null, status: "open", bids: [], createdAt: Date.now() }); showAlert("Item added!", "success"); }
       setNewItem({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' });
       setImagePreview(null); setImagePreview2(null); setEditingItemId(null);
     } catch (err) { showAlert("Failed to save item.", "error"); }
@@ -206,16 +192,11 @@ export default function App() {
   };
 
   const deleteItem = async (id) => {
-    if (window.confirm("Delete this item?")) {
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', id)); showAlert("Deleted.", "info");
-    }
+    if (window.confirm("Delete this item?")) { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', id)); showAlert("Deleted.", "info"); }
   };
 
   const closeAuction = async (item) => {
-    if (window.confirm(`Close auction for ${item.name}?`)) {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id), { status: 'closed' });
-      showAlert("Auction closed.", "info");
-    }
+    if (window.confirm(`Close auction for ${item.name}?`)) { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id), { status: 'closed' }); showAlert("Auction closed.", "info"); }
   };
 
   const scrollCarousel = (direction, categoryName) => {
@@ -223,11 +204,15 @@ export default function App() {
     if (container) container.scrollBy({ left: direction === 'left' ? -300 : 300, behavior: 'smooth' });
   };
 
+  // ==========================================
+  // LOGIN VIEW (RESTORED ORIGINAL STYLE)
+  // ==========================================
   if (!user) {
     const loginBgStyle = appSettings?.loginBg ? { backgroundImage: `linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.7)), url(${appSettings.loginBg})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { backgroundColor: colors.cornsilk };
     return (
       <div style={{ fontFamily: "'Poppins', sans-serif", ...loginBgStyle }} className="min-h-screen flex items-center justify-center p-6 text-[#336021]">
         <AlertToast alerts={alerts} colors={colors} />
+        
         {showTerms && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
             <div className="bg-white rounded-2xl p-6 max-w-md w-full border-t-8 shadow-2xl animate-in fade-in zoom-in duration-200" style={{ borderColor: colors.mossGreen }}>
@@ -248,6 +233,7 @@ export default function App() {
             </div>
           </div>
         )}
+
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 border-t-8" style={{ borderColor: colors.tangerine }}>
           <div className="flex justify-center mb-6"><div style={{ backgroundColor: colors.mossGreen }} className="p-4 rounded-full shadow-md"><Flame className="w-12 h-12 text-white fill-white" /></div></div>
           <h1 className="text-2xl font-bold text-center mb-2" style={{ color: colors.mossGreen }}>SupaMoto Auction 2026</h1>
@@ -266,9 +252,7 @@ export default function App() {
                 <Lock className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input type="password" required value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} placeholder={loginForm.isAdmin ? "Enter admin password" : "Create or enter password"} className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:border-transparent transition-all" />
               </div>
-              <p className="text-xs text-gray-400 mt-1 pl-1">
-  {!loginForm.isAdmin && "If new, this sets your account password."}
-</p>
+              <p className="text-xs text-gray-400 mt-1 pl-1">{!loginForm.isAdmin && "If new, this sets your account password."}</p>
             </div>
             <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl cursor-pointer border border-gray-200 hover:bg-gray-100 transition-colors" onClick={() => setLoginForm({...loginForm, isAdmin: !loginForm.isAdmin})}>
               <input type="checkbox" checked={loginForm.isAdmin} onChange={() => {}} className="w-4 h-4 text-orange-500 rounded cursor-pointer" />
@@ -281,7 +265,11 @@ export default function App() {
     );
   }
 
-  const groupedItems = items.filter(i => (i.name.toLowerCase().includes(searchQuery.toLowerCase()) || (i.desc && i.desc.toLowerCase().includes(searchQuery.toLowerCase()))) && (selectedCategory === 'All' || i.category === selectedCategory)).reduce((acc, item) => {
+  // ==========================================
+  // MAIN APP VIEW
+  // ==========================================
+  const filteredItems = items.filter(i => (i.name.toLowerCase().includes(searchQuery.toLowerCase()) || (i.desc && i.desc.toLowerCase().includes(searchQuery.toLowerCase()))) && (selectedCategory === 'All' || i.category === selectedCategory));
+  const groupedItems = filteredItems.reduce((acc, item) => {
     const cat = item.category || 'Uncategorized'; if (!acc[cat]) acc[cat] = []; acc[cat].push(item); return acc;
   }, {});
 
@@ -292,30 +280,46 @@ export default function App() {
       <Navbar user={user} colors={colors} handleLogout={() => { setUser(null); setLoginForm({ name: '', password: '', isAdmin: false }); }} />
       <AlertToast alerts={alerts} colors={colors} />
 
-     <main className="max-w-6xl mx-auto px-6 mt-8">
-        
-        {/* LAZY LOADED ADMIN PANEL */}
+      <main className="max-w-6xl mx-auto px-6 mt-8">
+        {/* LAZY LOADED ADMIN PANEL WITH ALL PROPS */}
         {user.role === 'admin' && (
           <Suspense fallback={<div className="p-8 text-center text-gray-500 font-bold animate-pulse">Loading Admin Tools...</div>}>
             <AdminPanel 
-              colors={colors} appSettings={appSettings} bgPreview={bgPreview} handleBgUpload={handleBgUpload} saveBgImage={saveBgImage}
-              editingItemId={editingItemId} setEditingItemId={setEditingItemId}
-              showCategoryForm={showCategoryForm} setShowCategoryForm={setShowCategoryForm} newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName} handleAddCategory={handleAddCategory}
-              newItem={newItem} setNewItem={setNewItem} categories={categories} handleAddOrUpdateItem={handleAddOrUpdateItem}
-              handleImageUpload={handleImageUpload} imagePreview={imagePreview} imagePreview2={imagePreview2} setImagePreview={setImagePreview} setImagePreview2={setImagePreview2}
-            />
+      db={db}
+  appId={appId}
+  doc={doc}
+  setDoc={setDoc}
+  deleteDoc={deleteDoc} // ADD THIS LINE
+  showAlert={showAlert}
+  dbUsers={dbUsers}
+  items={items}
+      colors={colors} appSettings={appSettings} bgPreview={bgPreview} handleBgUpload={handleBgUpload} saveBgImage={saveBgImage}
+      editingItemId={editingItemId} setEditingItemId={setEditingItemId}
+      showCategoryForm={showCategoryForm} setShowCategoryForm={setShowCategoryForm} newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName} handleAddCategory={handleAddCategory}
+      newItem={newItem} setNewItem={setNewItem} categories={categories} handleAddOrUpdateItem={handleAddOrUpdateItem}
+      handleImageUpload={handleImageUpload} imagePreview={imagePreview} imagePreview2={imagePreview2} setImagePreview={setImagePreview} setImagePreview2={setImagePreview2}
+    />
           </Suspense>
         )}
 
-        {/* NORMAL USER WELCOME MESSAGE */}
+        {/* WELCOME MESSAGE WITH TICKING TIMER */}
         {user.role === 'user' && (
-          <div className="bg-white rounded-xl shadow-sm p-6 mb-8 border border-gray-200 flex items-center gap-4">
-            <div style={{ backgroundColor: colors.mossGreen }} className="p-3 rounded-full text-white"><Trophy className="w-8 h-8" /></div>
-            <div><h2 className="text-xl font-bold" style={{ color: colors.mossGreen }}>Welcome to the Auction, {user.name}!</h2><p className="text-gray-600 text-sm">Browse items below. Place your highest bids to win clean energy solutions.</p></div>
+          <div className="bg-white rounded-xl shadow-sm p-6 mb-8 border border-gray-200 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div style={{ backgroundColor: colors.mossGreen }} className="p-3 rounded-full text-white"><Trophy className="w-8 h-8" /></div>
+              <div>
+                <h2 className="text-xl font-bold" style={{ color: colors.mossGreen }}>Welcome to the Auction, {user.name}!</h2>
+                <p className="text-gray-600 text-sm">Place your highest bids before time runs out.</p>
+              </div>
+            </div>
+            <div className="bg-orange-50 border-2 border-orange-200 px-6 py-3 rounded-2xl text-center min-w-[160px]">
+              <p className="text-xs font-bold uppercase tracking-wider text-orange-600">Time Remaining</p>
+              <p className="text-2xl font-mono font-black text-orange-700">{timeLeft || "00h 00m 00s"}</p>
+            </div>
           </div>
         )}
 
-        {/* SEARCH & FILTER BAR */}
+        {/* SEARCH & FILTER */}
         <div className="flex flex-col md:flex-row gap-4 mb-8 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
           <div className="relative flex-grow">
             <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -329,7 +333,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* AUCTION ITEM CAROUSELS */}
+        {/* AUCTION CAROUSELS */}
         {Object.keys(groupedItems).length > 0 ? (
           <div className="space-y-10">
             {Object.entries(groupedItems).map(([category, catItems]) => (
@@ -362,6 +366,7 @@ export default function App() {
         )}
       </main>
 
+      {/* FULLSCREEN IMAGE MODAL */}
       {expandedImage && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm" onClick={() => setExpandedImage(null)}>
           <div className="relative max-w-5xl max-h-full flex flex-col items-center animate-in fade-in zoom-in duration-200">
