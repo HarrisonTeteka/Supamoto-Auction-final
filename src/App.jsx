@@ -100,23 +100,36 @@ export default function App() {
     setTimeout(() => setAlerts(prev => prev.filter(a => a.id !== id)), 4000);
   };
 
-  const handleLogin = async (e) => {
+ const handleLogin = async (e) => {
     e.preventDefault();
-    if (!loginForm.name.trim()) return showAlert("Please enter your name.", "error");
-    if (loginForm.isAdmin) {
-      if (loginForm.password === 'admin123') { setUser({ name: loginForm.name, role: 'admin' }); showAlert(`Welcome Master!`, "success"); } 
-      else { showAlert("Incorrect Admin Password.", "error"); }
-      return;
-    } 
-    if (!loginForm.password.trim()) return showAlert("Please enter a password.", "error");
+    const enteredName = loginForm.name.trim();
+    const enteredPassword = loginForm.password.trim();
 
-    const existingUser = dbUsers.find(u => u.name.toLowerCase() === loginForm.name.trim().toLowerCase());
+    if (!enteredName || !enteredPassword) {
+      return showAlert("Please enter both name and password.", "error");
+    }
+
+    // Search the users list we already have from Firestore
+    const existingUser = dbUsers.find(u => u.name.toLowerCase() === enteredName.toLowerCase());
+
     if (existingUser) {
-      if (existingUser.password === loginForm.password) { setUser({ name: existingUser.name, role: 'user' }); showAlert(`Welcome back!`, "success"); } 
-      else { showAlert("Incorrect password.", "error"); }
+      // Check if the password matches the one in the DB
+      if (existingUser.password === enteredPassword) {
+        // Log them in with the role assigned in the DB (admin or user)
+        setUser({ name: existingUser.name, role: existingUser.role });
+        showAlert(`Welcome ${existingUser.role === 'admin' ? 'Master' : 'back'}!`, "success");
+      } else {
+        showAlert("Incorrect password.", "error");
+      }
     } else {
-      setPendingUser({ name: loginForm.name.trim(), password: loginForm.password });
-      setShowTerms(true);
+      // If the user doesn't exist, we treat them as a new bidder
+      // Note: We block the 'Admin' toggle from creating new admin accounts
+      if (loginForm.isAdmin) {
+        showAlert("Admin credentials not recognized.", "error");
+      } else {
+        setPendingUser({ name: enteredName, password: enteredPassword });
+        setShowTerms(true);
+      }
     }
   };
 
@@ -253,7 +266,9 @@ export default function App() {
                 <Lock className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input type="password" required value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} placeholder={loginForm.isAdmin ? "Enter admin password" : "Create or enter password"} className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:border-transparent transition-all" />
               </div>
-              <p className="text-xs text-gray-400 mt-1 pl-1">{loginForm.isAdmin ? "Hint: Try 'admin123'" : "If new, this sets your account password."}</p>
+              <p className="text-xs text-gray-400 mt-1 pl-1">
+  {!loginForm.isAdmin && "If new, this sets your account password."}
+</p>
             </div>
             <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl cursor-pointer border border-gray-200 hover:bg-gray-100 transition-colors" onClick={() => setLoginForm({...loginForm, isAdmin: !loginForm.isAdmin})}>
               <input type="checkbox" checked={loginForm.isAdmin} onChange={() => {}} className="w-4 h-4 text-orange-500 rounded cursor-pointer" />
