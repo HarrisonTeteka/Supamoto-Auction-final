@@ -19,24 +19,28 @@ export default function AdminPanel({
 
   // --- Export Logic ---
   const exportWinnersCSV = () => {
-    if (!items.length) return showAlert?.("No items to export", "error");
-    
-    let csvContent = "Item Name,Category,Winner Name,Final Price (K),Status\n";
+  const winners = items.filter(item => item.status === 'closed' && item.topBidder);
+  
+  if (!winners.length) return showAlert?.("No closed auction winners to export yet.", "error");
+  
+  let csvContent = "Item Name,Category,Winner Name,Final Price (K),Status\n";
 
-    items.forEach(item => {
-      const itemName = (item.name || "Unnamed").replace(/,/g, ""); 
-      const winner = item.topBidder || "No Bids";
-      const price = item.currentBid || 0;
-      const status = item.status || "open";
-      
-      csvContent += `${itemName},${item.category},${winner},${price},${status}\n`;
-    });
+  winners.forEach(item => {
+    const itemName = (item.name || "Unnamed").replace(/,/g, "");
+    const winner = (item.topBidder || "").replace(/,/g, "");
+    const price = item.currentBid || 0;
+    const status = item.status || "closed";
+    
+    csvContent += `"${itemName}","${item.category}","${winner}",${price},"${status}"\n`;
+  });
+
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `SupaMoto_Auction_Winners_${new Date().toLocaleDateString()}.csv`);
+    link.setAttribute("download", `SupaMoto_Auction_Winners_${new Date().toISOString().slice(0, 10)}.csv`);
+
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -59,23 +63,155 @@ export default function AdminPanel({
 
   return (
     <>
-      {/* --- AUCTION ANALYTICS DASHBOARD --- */}
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 text-center">
-          <p className="text-gray-500 text-xs font-bold uppercase tracking-wider">Total Bidders</p>
-          <p className="text-3xl font-black" style={{ color: colors.mossGreen }}>{dbUsers.length}</p>
-        </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 text-center">
-          <p className="text-gray-500 text-xs font-bold uppercase tracking-wider">Total Items</p>
-          <p className="text-3xl font-black" style={{ color: colors.mossGreen }}>{items.length}</p>
-        </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 text-center">
-          <p className="text-gray-500 text-xs font-bold uppercase tracking-wider">Total Revenue (K)</p>
-          <p className="text-3xl font-black text-orange-600">
-            {items.reduce((sum, i) => sum + (i.currentBid || 0), 0)}
-          </p>
-        </div>
-      </section>
+      {/* --- ANALYTICS KPI ROW --- */}
+<section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 text-center">
+    <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Total Bidders</p>
+    <p className="text-3xl font-black" style={{ color: colors.mossGreen }}>{dbUsers.length}</p>
+  </div>
+  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 text-center">
+    <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Items Listed</p>
+    <p className="text-3xl font-black" style={{ color: colors.mossGreen }}>{items.length}</p>
+  </div>
+  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 text-center">
+    <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Winners</p>
+    <p className="text-3xl font-black text-yellow-600">
+      {items.filter(i => i.status === 'closed' && i.topBidder).length}
+    </p>
+  </div>
+  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 text-center">
+    <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Revenue (K)</p>
+    <p className="text-3xl font-black text-orange-600">
+      {items.filter(i => i.status === 'closed').reduce((sum, i) => sum + (i.currentBid || 0), 0).toLocaleString()}
+    </p>
+  </div>
+</section>
+
+{/* --- ROW 1: BIDDERS & ITEMS --- */}
+<section className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+
+  {/* Bidders Panel */}
+  <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+    <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+      <h3 className="font-bold text-gray-700 flex items-center gap-2">
+        👥 Bidders
+        <span className="bg-gray-100 text-gray-500 text-xs font-semibold px-2 py-0.5 rounded-full">{dbUsers.length}</span>
+      </h3>
+    </div>
+    <div className="divide-y divide-gray-50 max-h-72 overflow-y-auto">
+      {dbUsers.length === 0 ? (
+        <p className="text-center text-gray-400 py-10 text-sm">No bidders yet</p>
+      ) : (
+        dbUsers.map((u, idx) => (
+          <div key={u.id || idx} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
+            <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+              style={{ backgroundColor: colors.mossGreen }}>
+              {u.name?.charAt(0).toUpperCase()}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-gray-800 text-sm truncate">{u.name}</p>
+              <p className="text-xs text-gray-400">{u.role === 'admin' ? '🔑 Admin' : 'Bidder'}</p>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  </div>
+
+  {/* Items Panel */}
+  <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+    <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+      <h3 className="font-bold text-gray-700 flex items-center gap-2">
+        📦 Items on Auction
+        <span className="bg-gray-100 text-gray-500 text-xs font-semibold px-2 py-0.5 rounded-full">{items.length}</span>
+      </h3>
+    </div>
+    <div className="divide-y divide-gray-50 max-h-72 overflow-y-auto">
+      {items.length === 0 ? (
+        <p className="text-center text-gray-400 py-10 text-sm">No items listed yet</p>
+      ) : (
+        items.map((item, idx) => (
+          <div key={item.id || idx} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
+            <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center flex-shrink-0 text-sm">
+              📦
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-gray-800 text-sm truncate">{item.name}</p>
+              <p className="text-xs text-gray-400">{item.category} · Current bid: K{(item.currentBid || 0).toLocaleString()}</p>
+            </div>
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${
+              item.status === 'closed'
+                ? 'bg-gray-100 text-gray-500'
+                : 'bg-green-100 text-green-700'
+            }`}>
+              {item.status === 'closed' ? 'Ended' : 'Live'}
+            </span>
+          </div>
+        ))
+      )}
+    </div>
+  </div>
+</section>
+
+{/* --- ROW 2: WINNERS TABLE --- */}
+<section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+  <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+    <h3 className="font-bold text-gray-700 flex items-center gap-2">
+      🏆 Winners
+      <span className="bg-yellow-100 text-yellow-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+        {items.filter(i => i.status === 'closed' && i.topBidder).length}
+      </span>
+    </h3>
+    <button
+      onClick={exportWinnersCSV}
+      className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-lg text-white transition-all"
+      style={{ backgroundColor: colors.mossGreen }}
+    >
+      ⬇ Export CSV for HR
+    </button>
+  </div>
+  <div className="overflow-x-auto">
+    <table className="w-full text-sm">
+      <thead className="bg-gray-50 border-b border-gray-100">
+        <tr>
+          <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">#</th>
+          <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Winner</th>
+          <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Item Won</th>
+          <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Winning Price</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-gray-50">
+        {items.filter(i => i.status === 'closed' && i.topBidder).length === 0 ? (
+          <tr>
+            <td colSpan={4} className="text-center py-12 text-gray-400">No auction winners yet</td>
+          </tr>
+        ) : (
+          items
+            .filter(i => i.status === 'closed' && i.topBidder)
+            .map((item, idx) => (
+              <tr key={item.id || idx} className="hover:bg-gray-50 transition-colors">
+                <td className="px-5 py-3 text-gray-400 font-medium">{idx + 1}</td>
+                <td className="px-5 py-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white"
+                      style={{ backgroundColor: colors.tangerine }}>
+                      {item.topBidder?.charAt(0).toUpperCase()}
+                    </div>
+                    <span className="font-medium text-gray-800">{item.topBidder}</span>
+                  </div>
+                </td>
+                <td className="px-5 py-3 text-gray-600">{item.name}</td>
+                <td className="px-5 py-3 font-bold" style={{ color: colors.mossGreen }}>
+                  K{(item.currentBid || 0).toLocaleString()}
+                </td>
+              </tr>
+            ))
+        )}
+      </tbody>
+    </table>
+  </div>
+</section>
+
 
       {/* --- EXPORT SECTION --- */}
       <section className="bg-white rounded-xl shadow-md p-6 mb-8 border-l-8 border-green-600 flex flex-col md:flex-row justify-between items-center gap-4">
