@@ -1,0 +1,427 @@
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, setDoc } from 'firebase/firestore';
+import { 
+  Flame, User, Trophy, Shield, Lock, Search, Plus, Edit2, 
+  XCircle, Tag, ImagePlus, ChevronLeft, ChevronRight, MonitorSmartphone, AlertTriangle 
+} from 'lucide-react';
+
+// Import your organized components
+import Navbar from './components/Navbar';
+import AlertToast from './components/AlertToast';
+import AuctionCard from './components/AuctionCard';
+
+// ==========================================
+// 1. FIREBASE CONFIGURATION
+// ==========================================
+// PUT YOUR REAL FIREBASE KEYS HERE:
+const firebaseConfig = {
+   apiKey: "AIzaSyDB2C2dqq0nH0wB1_PeOwZJXvFhWg1KcgU",
+  authDomain: "gen-lang-client-0725669809.firebaseapp.com",
+  projectId: "gen-lang-client-0725669809",
+  storageBucket: "gen-lang-client-0725669809.firebasestorage.app",
+  messagingSenderId: "898837999277",
+  appId: "1:898837999277:web:c42fb2e5bd131bbf56e024",
+  measurementId: "G-WB26WRGXTF"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = 'supamoto-auction-2026';
+
+// ==========================================
+// 2. MAIN APPLICATION
+// ==========================================
+
+export default function App() {
+  const colors = { tangerine: '#F58202', mossGreen: '#336021', auburn: '#9E2A2B', cornsilk: '#F9EDCC' };
+
+  // --- State ---
+  const [user, setUser] = useState(null);
+  const [dbUsers, setDbUsers] = useState([]);
+  const [items, setItems] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [loginForm, setLoginForm] = useState({ name: '', password: '', isAdmin: false });
+  const [bidInputs, setBidInputs] = useState({});
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [expandedImage, setExpandedImage] = useState(null);
+  const [appSettings, setAppSettings] = useState({ loginBg: null });
+  const [bgPreview, setBgPreview] = useState(null);
+
+  const [categories, setCategories] = useState(['Cookstoves', 'Fuel', 'Solar', 'General']);
+  const [showCategoryForm, setShowCategoryForm] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newItem, setNewItem] = useState({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' });
+  const [imagePreview, setImagePreview] = useState(null);
+  const [imagePreview2, setImagePreview2] = useState(null);
+  const [editingItemId, setEditingItemId] = useState(null);
+
+  const [showTerms, setShowTerms] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [pendingUser, setPendingUser] = useState(null);
+
+  // --- Initialization ---
+  useEffect(() => {
+    const link = document.createElement('link');
+    link.href = '[https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap](https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap)';
+    link.rel = 'stylesheet';
+    document.head.appendChild(link);
+
+    const initAuth = async () => { try { await signInAnonymously(auth); } catch(e){} };
+    initAuth();
+    onAuthStateChanged(auth, () => {});
+
+    const unsubItems = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'items'), (snap) => {
+      setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt));
+    });
+    const unsubCat = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'categories'), (snap) => {
+      const cats = snap.docs.map(d => d.data().name);
+      if (cats.length > 0) setCategories(cats);
+    });
+    const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), (snap) => {
+      setDbUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    const unsubSettings = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'general'), (snap) => {
+      if (snap.exists()) setAppSettings(snap.data());
+    });
+
+    return () => { document.head.removeChild(link); unsubItems(); unsubCat(); unsubUsers(); unsubSettings(); };
+  }, []);
+
+  const showAlert = (message, type = 'info') => {
+    const id = Date.now();
+    setAlerts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setAlerts(prev => prev.filter(a => a.id !== id)), 4000);
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!loginForm.name.trim()) return showAlert("Please enter your name.", "error");
+    if (loginForm.isAdmin) {
+      if (loginForm.password === 'admin123') { setUser({ name: loginForm.name, role: 'admin' }); showAlert(`Welcome Master!`, "success"); } 
+      else { showAlert("Incorrect Admin Password.", "error"); }
+      return;
+    } 
+    if (!loginForm.password.trim()) return showAlert("Please enter a password.", "error");
+
+    const existingUser = dbUsers.find(u => u.name.toLowerCase() === loginForm.name.trim().toLowerCase());
+    if (existingUser) {
+      if (existingUser.password === loginForm.password) { setUser({ name: existingUser.name, role: 'user' }); showAlert(`Welcome back!`, "success"); } 
+      else { showAlert("Incorrect password.", "error"); }
+    } else {
+      setPendingUser({ name: loginForm.name.trim(), password: loginForm.password });
+      setShowTerms(true);
+    }
+  };
+
+  const completeRegistration = async () => {
+    if (!termsAccepted || !pendingUser) return;
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'users'), { name: pendingUser.name, password: pendingUser.password, role: 'user', createdAt: Date.now() });
+      setUser({ name: pendingUser.name, role: 'user' });
+      showAlert(`Account created.`, "success");
+      setShowTerms(false); setTermsAccepted(false); setPendingUser(null);
+    } catch (err) { showAlert("Error creating account.", "error"); }
+  };
+
+  const placeBid = async (item) => {
+    const amt = parseFloat(bidInputs[item.id]);
+    if (isNaN(amt) || amt < (item.currentBid === 0 ? item.startPrice : item.currentBid + 1)) return showAlert("Invalid bid amount.", "error");
+    try {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id), {
+        currentBid: amt, topBidder: user.name, bids: [...(item.bids || []), { bidder: user.name, amount: amt, timestamp: Date.now() }]
+      });
+      setBidInputs(prev => ({ ...prev, [item.id]: '' }));
+      showAlert(`Bid of K${amt} placed!`, "success");
+    } catch (err) { showAlert("Failed to connect.", "error"); }
+  };
+
+  const handleAddOrUpdateItem = async (e) => {
+    e.preventDefault();
+    try {
+      const data = { ...newItem, startPrice: parseFloat(newItem.startPrice), faultDescription: newItem.isFaulty ? newItem.faultDescription : '' };
+      if (editingItemId) {
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', editingItemId), data);
+        showAlert("Item updated!", "success");
+      } else {
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'items'), { ...data, currentBid: 0, topBidder: null, status: "open", bids: [], createdAt: Date.now() });
+        showAlert("Item added!", "success");
+      }
+      setNewItem({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' });
+      setImagePreview(null); setImagePreview2(null); setEditingItemId(null);
+    } catch (err) { showAlert("Failed to save item.", "error"); }
+  };
+
+  const handleImageUpload = (e, field) => {
+    const file = e.target.files[0];
+    if (!file || file.size > 200 * 1024) return showAlert("Image too large (max 200KB).", "error");
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setNewItem(prev => ({ ...prev, [field]: reader.result }));
+      if (field === 'image') setImagePreview(reader.result);
+      if (field === 'image2') setImagePreview2(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleBgUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file || file.size > 500 * 1024) return showAlert("Background max 500KB.", "error");
+    const reader = new FileReader();
+    reader.onloadend = () => setBgPreview(reader.result);
+    reader.readAsDataURL(file);
+  };
+
+  const saveBgImage = async () => {
+    if (!bgPreview) return;
+    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'general'), { loginBg: bgPreview }, { merge: true });
+    showAlert("Background updated!", "success"); setBgPreview(null);
+  };
+
+  const handleAddCategory = async (e) => {
+    e.preventDefault();
+    const trimmed = newCategoryName.trim();
+    if (!trimmed || categories.includes(trimmed)) return;
+    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'categories'), { name: trimmed });
+    setNewItem({ ...newItem, category: trimmed }); setNewCategoryName(''); setShowCategoryForm(false); showAlert("Category created!", "success");
+  };
+
+  const deleteItem = async (id) => {
+    if (window.confirm("Delete this item?")) {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', id)); showAlert("Deleted.", "info");
+    }
+  };
+
+  const closeAuction = async (item) => {
+    if (window.confirm(`Close auction for ${item.name}?`)) {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id), { status: 'closed' });
+      showAlert("Auction closed.", "info");
+    }
+  };
+
+  const scrollCarousel = (direction, categoryName) => {
+    const container = document.getElementById(`carousel-${categoryName.replace(/\s+/g, '-')}`);
+    if (container) container.scrollBy({ left: direction === 'left' ? -300 : 300, behavior: 'smooth' });
+  };
+
+  if (!user) {
+    const loginBgStyle = appSettings?.loginBg ? { backgroundImage: `linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.7)), url(${appSettings.loginBg})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { backgroundColor: colors.cornsilk };
+    return (
+      <div style={{ fontFamily: "'Poppins', sans-serif", ...loginBgStyle }} className="min-h-screen flex items-center justify-center p-6 text-[#336021]">
+        <AlertToast alerts={alerts} colors={colors} />
+        {showTerms && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl p-6 max-w-md w-full border-t-8 shadow-2xl animate-in fade-in zoom-in duration-200" style={{ borderColor: colors.mossGreen }}>
+              <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><AlertTriangle className="text-orange-500" /> Terms of Auction</h2>
+              <div className="bg-orange-50 rounded-lg p-4 border border-orange-100 mb-5">
+                <p className="text-sm font-medium leading-relaxed" style={{ color: colors.mossGreen }}>
+                  These terms have been established by management. By proceeding, you acknowledge that all actions and decisions are your responsibility, including any resulting payroll deductions and penalties.
+                </p>
+              </div>
+              <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer mb-6 border border-gray-200 hover:bg-gray-100 transition-colors">
+                <input type="checkbox" checked={termsAccepted} onChange={e => setTermsAccepted(e.target.checked)} className="mt-0.5 w-5 h-5 text-orange-500 rounded cursor-pointer" />
+                <span className="text-sm font-semibold text-gray-700">Please check the box to confirm your acknowledgment.</span>
+              </label>
+              <div className="flex gap-3">
+                <button onClick={() => { setShowTerms(false); setPendingUser(null); }} className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300 transition-colors">Cancel</button>
+                <button onClick={completeRegistration} disabled={!termsAccepted} style={{ backgroundColor: colors.tangerine }} className={`flex-1 py-3 text-white rounded-xl font-bold transition-all shadow-sm ${!termsAccepted ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90 hover:shadow-md'}`}>Confirm & Join</button>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 border-t-8" style={{ borderColor: colors.tangerine }}>
+          <div className="flex justify-center mb-6"><div style={{ backgroundColor: colors.mossGreen }} className="p-4 rounded-full shadow-md"><Flame className="w-12 h-12 text-white fill-white" /></div></div>
+          <h1 className="text-2xl font-bold text-center mb-2" style={{ color: colors.mossGreen }}>SupaMoto Auction 2026</h1>
+          <p className="text-center text-gray-500 mb-8 text-sm">Chinja Malasha. Chinja Umoyo.</p>
+          <form onSubmit={handleLogin} className="space-y-5">
+            <div>
+              <label className="block text-sm font-medium mb-1 text-gray-700">Display Name</label>
+              <div className="relative">
+                <User className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input type="text" required value={loginForm.name} onChange={e => setLoginForm({...loginForm, name: e.target.value})} placeholder="Enter your name" className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:border-transparent transition-all" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1 text-gray-700">Password</label>
+              <div className="relative">
+                <Lock className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input type="password" required value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} placeholder={loginForm.isAdmin ? "Enter admin password" : "Create or enter password"} className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:border-transparent transition-all" />
+              </div>
+              <p className="text-xs text-gray-400 mt-1 pl-1">{loginForm.isAdmin ? "Hint: Try 'admin123'" : "If new, this sets your account password."}</p>
+            </div>
+            <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl cursor-pointer border border-gray-200 hover:bg-gray-100 transition-colors" onClick={() => setLoginForm({...loginForm, isAdmin: !loginForm.isAdmin})}>
+              <input type="checkbox" checked={loginForm.isAdmin} onChange={() => {}} className="w-4 h-4 text-orange-500 rounded cursor-pointer" />
+              <label className="text-sm font-medium flex items-center gap-2 text-gray-700 cursor-pointer"><Shield className="w-4 h-4 text-gray-500" /> I am a Bidder Master (Admin)</label>
+            </div>
+            <button type="submit" style={{ backgroundColor: colors.tangerine }} className="w-full text-white font-bold py-3 rounded-xl shadow-md hover:opacity-90 transition-opacity mt-4">Enter Auction Arena</button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  const groupedItems = items.filter(i => (i.name.toLowerCase().includes(searchQuery.toLowerCase()) || (i.desc && i.desc.toLowerCase().includes(searchQuery.toLowerCase()))) && (selectedCategory === 'All' || i.category === selectedCategory)).reduce((acc, item) => {
+    const cat = item.category || 'Uncategorized'; if (!acc[cat]) acc[cat] = []; acc[cat].push(item); return acc;
+  }, {});
+
+  return (
+    <div style={{ fontFamily: "'Poppins', sans-serif", backgroundColor: colors.cornsilk }} className="min-h-screen text-[#336021] pb-12 overflow-x-hidden">
+      <style>{`.hide-scroll::-webkit-scrollbar { display: none; } .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
+      
+      <Navbar user={user} colors={colors} handleLogout={() => { setUser(null); setLoginForm({ name: '', password: '', isAdmin: false }); }} />
+      <AlertToast alerts={alerts} colors={colors} />
+
+      <main className="max-w-6xl mx-auto px-6 mt-8">
+        {user.role === 'admin' && (
+          <>
+            <section className="bg-white rounded-xl shadow-md border-t-4 p-6 mb-8 transition-all" style={{ borderColor: colors.mossGreen }}>
+              <h2 className="text-xl font-bold flex items-center gap-2 mb-4"><MonitorSmartphone className="w-5 h-5" /> Login Background</h2>
+              <div className="flex flex-col md:flex-row gap-4 items-center bg-gray-50 p-4 rounded-lg border border-gray-200">
+                <div className="flex-grow w-full md:w-auto">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Upload New Background Photo (Max 500KB)</label>
+                  <div className="flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-1.5 bg-white">
+                    <ImagePlus className="w-5 h-5 text-gray-500 flex-shrink-0" />
+                    <input type="file" accept="image/*" onChange={handleBgUpload} className="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-orange-100 file:text-orange-700 hover:file:bg-orange-200 outline-none w-full" />
+                  </div>
+                </div>
+                {bgPreview && (
+                  <div className="flex items-center gap-4 w-full md:w-auto">
+                    <img src={bgPreview} alt="Preview" className="w-24 h-16 object-cover rounded shadow-sm border border-gray-200" />
+                    <button onClick={saveBgImage} style={{ backgroundColor: colors.tangerine }} className="text-white px-6 py-2 rounded-lg hover:opacity-90 transition-opacity font-semibold whitespace-nowrap">Save</button>
+                  </div>
+                )}
+                {appSettings?.loginBg && !bgPreview && (
+                  <div className="flex items-center gap-3"><span className="text-sm text-gray-500 font-medium">Current:</span><img src={appSettings.loginBg} alt="Current" className="w-16 h-10 object-cover rounded shadow-sm border border-gray-200 opacity-70" /></div>
+                )}
+              </div>
+            </section>
+
+            <section className="bg-white rounded-xl shadow-md border-t-4 p-6 mb-8 transition-all" style={{ borderColor: editingItemId ? colors.tangerine : colors.mossGreen }}>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold flex items-center gap-2" style={{ color: editingItemId ? colors.tangerine : colors.mossGreen }}>{editingItemId ? <Edit2 className="w-5 h-5"/> : <Plus className="w-5 h-5"/>} {editingItemId ? 'Edit Item' : 'Add New Item'}</h2>
+              </div>
+              
+              {showCategoryForm && (
+                <form onSubmit={handleAddCategory} className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200 flex flex-col md:flex-row gap-3 items-center">
+                  <Tag className="w-5 h-5 text-gray-400" />
+                  <input autoFocus type="text" placeholder="New Category Name..." value={newCategoryName} onChange={e => setNewCategoryName(e.target.value)} className="px-4 py-2 border rounded-lg outline-none flex-grow focus:ring-2 focus:ring-orange-400" />
+                  <div className="flex gap-2 w-full md:w-auto">
+                    <button type="submit" style={{ backgroundColor: colors.mossGreen }} className="text-white px-4 py-2 rounded-lg font-medium flex-1 md:flex-none">Save</button>
+                    <button type="button" onClick={() => setShowCategoryForm(false)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-medium flex-1 md:flex-none hover:bg-gray-300">Cancel</button>
+                  </div>
+                </form>
+              )}
+
+              <form onSubmit={handleAddOrUpdateItem} className="flex flex-col gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <input required type="text" placeholder="Item Name" value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} className="px-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-orange-400 transition-shadow" />
+                  <div className="flex gap-2">
+                    <select required value={newItem.category} onChange={e => setNewItem({...newItem, category: e.target.value})} className="px-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-orange-400 transition-shadow flex-grow bg-white">
+                      <option value="" disabled>Select Category</option>
+                      {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <button type="button" onClick={() => setShowCategoryForm(true)} className="bg-gray-100 text-gray-600 px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors" title="Add Category"><Plus className="w-5 h-5"/></button>
+                  </div>
+                  <input required type="number" min="1" placeholder="Start Price (K)" value={newItem.startPrice} onChange={e => setNewItem({...newItem, startPrice: e.target.value})} className="px-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-orange-400 transition-shadow" />
+                </div>
+                <div className="flex flex-col gap-4">
+                  <input type="text" placeholder="Short Description" value={newItem.desc} onChange={e => setNewItem({...newItem, desc: e.target.value})} className="px-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-orange-400 w-full transition-shadow" />
+                  
+                  <div className="flex flex-col border border-gray-200 rounded-lg p-3 bg-gray-50">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-gray-700 mb-2">
+                      <input type="checkbox" checked={newItem.isFaulty} onChange={e => setNewItem({...newItem, isFaulty: e.target.checked})} className="w-4 h-4 text-orange-500 rounded cursor-pointer" /> Faulty / Damaged Item
+                    </label>
+                    {newItem.isFaulty && <input type="text" placeholder="Specify fault..." value={newItem.faultDescription} onChange={e => setNewItem({...newItem, faultDescription: e.target.value})} className="px-3 py-2 border border-red-300 rounded-md outline-none focus:ring-2 focus:ring-red-400 w-full text-sm bg-white" required={newItem.isFaulty} />}
+                  </div>
+
+                  <div className="flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-end">
+                    <div className="flex flex-col sm:flex-row gap-2 w-full xl:w-auto flex-grow">
+                      <div className="flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-1.5 bg-gray-50 flex-1">
+                        <ImagePlus className="w-5 h-5 text-gray-500 flex-shrink-0" />
+                        <input type="file" accept="image/*" onChange={e => handleImageUpload(e, 'image')} className="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-orange-100 file:text-orange-700 hover:file:bg-orange-200 outline-none w-full" />
+                        {imagePreview && <img src={imagePreview} className="w-8 h-8 object-cover rounded shadow-sm ml-auto" />}
+                      </div>
+                      <div className="flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-1.5 bg-gray-50 flex-1">
+                        <ImagePlus className="w-5 h-5 text-gray-500 flex-shrink-0" />
+                        <input type="file" accept="image/*" onChange={e => handleImageUpload(e, 'image2')} className="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-orange-100 file:text-orange-700 hover:file:bg-orange-200 outline-none w-full" />
+                        {imagePreview2 && <img src={imagePreview2} className="w-8 h-8 object-cover rounded shadow-sm ml-auto" />}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 w-full xl:w-auto">
+                      <button type="submit" style={{ backgroundColor: editingItemId ? colors.tangerine : colors.mossGreen }} className="text-white px-8 py-2 rounded-lg hover:opacity-90 transition-opacity font-semibold whitespace-nowrap flex-1 xl:flex-none">{editingItemId ? 'Update Item' : 'Add Item'}</button>
+                      {editingItemId && <button type="button" onClick={() => { setEditingItemId(null); setNewItem({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' }); setImagePreview(null); setImagePreview2(null); }} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors flex-1 xl:flex-none"><XCircle className="w-5 h-5 mx-auto" /></button>}
+                    </div>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </>
+        )}
+
+        {user.role === 'user' && (
+          <div className="bg-white rounded-xl shadow-sm p-6 mb-8 border border-gray-200 flex items-center gap-4">
+            <div style={{ backgroundColor: colors.mossGreen }} className="p-3 rounded-full text-white"><Trophy className="w-8 h-8" /></div>
+            <div><h2 className="text-xl font-bold" style={{ color: colors.mossGreen }}>Welcome to the Auction, {user.name}!</h2><p className="text-gray-600 text-sm">Browse items below. Place your highest bids to win clean energy solutions.</p></div>
+          </div>
+        )}
+
+        <div className="flex flex-col md:flex-row gap-4 mb-8 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+          <div className="relative flex-grow">
+            <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input type="text" placeholder="Search auction items..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-orange-400 transition-colors" />
+          </div>
+          <div className="w-full md:w-64">
+            <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-orange-400 transition-colors bg-white font-medium text-gray-700">
+              <option value="All">All Categories</option>
+              {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {Object.keys(groupedItems).length > 0 ? (
+          <div className="space-y-10">
+            {Object.entries(groupedItems).map(([category, catItems]) => (
+              <div key={category} className="flex flex-col">
+                <div className="flex justify-between items-end mb-4 px-1">
+                  <h3 className="text-2xl font-bold flex items-center gap-2" style={{ color: colors.mossGreen }}><Tag className="w-6 h-6" style={{ color: colors.tangerine }} /> {category} <span className="text-sm font-normal text-gray-500 ml-2">({catItems.length})</span></h3>
+                  <div className="hidden md:flex gap-2">
+                    <button onClick={() => scrollCarousel('left', category)} className="p-1.5 rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors shadow-sm"><ChevronLeft className="w-5 h-5" /></button>
+                    <button onClick={() => scrollCarousel('right', category)} className="p-1.5 rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors shadow-sm"><ChevronRight className="w-5 h-5" /></button>
+                  </div>
+                </div>
+                <div id={`carousel-${category.replace(/\s+/g, '-')}`} className="flex overflow-x-auto snap-x snap-mandatory gap-6 pb-6 pt-2 hide-scroll px-1">
+                  {catItems.map(item => (
+                    <AuctionCard 
+                      key={item.id} item={item} colors={colors} user={user} 
+                      bidInput={bidInputs[item.id]} onBidChange={(id, val) => setBidInputs(prev => ({...prev, [id]: val}))}
+                      onPlaceBid={placeBid} onStartEdit={(i) => {
+                        setNewItem({ name: i.name, desc: i.desc, startPrice: i.startPrice, category: i.category || categories[0], image: i.image || null, image2: i.image2 || null, isFaulty: i.isFaulty || false, faultDescription: i.faultDescription || '' });
+                        setImagePreview(i.image || null); setImagePreview2(i.image2 || null); setEditingItemId(i.id); window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                      onDelete={deleteItem} onClose={closeAuction} onExpandImage={setExpandedImage}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center text-gray-500 py-16 bg-white rounded-xl shadow-sm border border-gray-200"><Flame className="w-16 h-16 mx-auto mb-4 opacity-20" /><p className="text-xl font-medium" style={{ color: colors.mossGreen }}>{items.length === 0 ? "No items on the auction block yet." : "No items match your search or filter."}</p></div>
+        )}
+      </main>
+
+      {expandedImage && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm" onClick={() => setExpandedImage(null)}>
+          <div className="relative max-w-5xl max-h-full flex flex-col items-center animate-in fade-in zoom-in duration-200">
+            <button onClick={() => setExpandedImage(null)} className="absolute -top-12 right-0 text-white hover:text-orange-400 transition-colors"><XCircle className="w-10 h-10" /></button>
+            <img src={expandedImage} alt="Expanded view" className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl border-4 border-white/10" onClick={e => e.stopPropagation()} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
