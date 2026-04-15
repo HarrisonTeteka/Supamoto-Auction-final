@@ -196,13 +196,23 @@ if (passwordMatch) {
     setNewItem({ ...newItem, category: trimmed }); setNewCategoryName(''); setShowCategoryForm(false); showAlert("Category created!", "success");
   };
 
-  const deleteItem = async (id) => {
-    if (window.confirm("Delete this item?")) { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', id)); showAlert("Deleted.", "info"); }
-  };
+const deleteItem = async (id) => {
+  const item = items.find(i => i.id === id);
+  if (window.confirm(`Are you sure you want to permanently delete "${item?.name || 'this item'}"? This cannot be undone.`)) {
+    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', id));
+    showAlert("Item deleted.", "info");
+  }
+};
+
 
   const closeAuction = async (item) => {
-    if (window.confirm(`Close auction for ${item.name}?`)) { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id), { status: 'closed' }); showAlert("Auction closed.", "info"); }
-  };
+  const topBidder = item.topBidder ? ` Winner will be: ${item.topBidder} (K${item.currentBid}).` : ' No bids placed yet.';
+  if (window.confirm(`Close auction for "${item.name}"?${topBidder} This cannot be undone.`)) {
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id), { status: 'closed' });
+    showAlert("Auction closed successfully.", "info");
+  }
+};
+
 
   const scrollCarousel = (direction, categoryName) => {
     const container = document.getElementById(`carousel-${categoryName.replace(/\s+/g, '-')}`);
