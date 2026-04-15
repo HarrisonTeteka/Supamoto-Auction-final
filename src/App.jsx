@@ -10,15 +10,17 @@ import {
 import Navbar from './components/Navbar';
 import AlertToast from './components/AlertToast';
 import AuctionCard from './components/AuctionCard';
+import bcrypt from 'bcryptjs';
+
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDB2C2dqq0nH0wB1_PeOwZJXvFhWg1KcgU",
-  authDomain: "gen-lang-client-0725669809.firebaseapp.com",
-  projectId: "gen-lang-client-0725669809",
-  storageBucket: "gen-lang-client-0725669809.firebasestorage.app",
-  messagingSenderId: "898837999277",
-  appId: "1:898837999277:web:c42fb2e5bd131bbf56e024",
-  measurementId: "G-WB26WRGXTF"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
 const AdminPanel = lazy(() => import('./components/AdminPanel'));
@@ -125,9 +127,11 @@ export default function App() {
   };
 
   const completeRegistration = async () => {
-    if (!termsAccepted || !pendingUser) return;
-    try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'users'), { name: pendingUser.name, password: pendingUser.password, role: 'user', createdAt: Date.now() });
+  if (!termsAccepted || !pendingUser) return;
+  try {
+    const hashedPassword = await bcrypt.hash(pendingUser.password, 10);
+    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'users'), { name: pendingUser.name, password: hashedPassword, role: 'user', createdAt: Date.now() });
+
       setUser({ name: pendingUser.name, role: 'user' });
       showAlert(`Account created.`, "success");
       setShowTerms(false); setTermsAccepted(false); setPendingUser(null);
