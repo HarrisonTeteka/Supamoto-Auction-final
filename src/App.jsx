@@ -116,7 +116,8 @@ export default function App() {
     if (!enteredName || !enteredPassword) return showAlert("Please enter both name and password.", "error");
     const existingUser = dbUsers.find(u => u.name.toLowerCase() === enteredName.toLowerCase());
     if (existingUser) {
-      if (existingUser.password === enteredPassword) {
+      const passwordMatch = await bcrypt.compare(enteredPassword, existingUser.password);
+if (passwordMatch) {
         setUser({ name: existingUser.name, role: existingUser.role });
         showAlert(`Welcome ${existingUser.role === 'admin' ? 'Master' : 'back'}!`, "success");
       } else { showAlert("Incorrect password.", "error"); }
