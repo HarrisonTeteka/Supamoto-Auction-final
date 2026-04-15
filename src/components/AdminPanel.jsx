@@ -2,14 +2,14 @@ import React from 'react';
 import { doc, setDoc } from "firebase/firestore"; 
 import { 
   MonitorSmartphone, ImagePlus, Edit2, Plus, Tag, XCircle, 
-  Clock, Trophy, Download, User 
+  Clock, Trophy, Download 
 } from 'lucide-react';
 
 export default function AdminPanel({
+  // Added items and dbUsers to the props
   items = [], 
   dbUsers = [], 
-  db, appId, showAlert,
-  doc, setDoc, deleteDoc,
+  db, appId, showAlert, 
   colors, appSettings, bgPreview, handleBgUpload, saveBgImage,
   editingItemId, setEditingItemId,
   showCategoryForm, setShowCategoryForm, newCategoryName, setNewCategoryName, handleAddCategory,
@@ -45,7 +45,7 @@ export default function AdminPanel({
   // --- Timer Logic ---
   const resetAuctionTimer = async () => {
     try {
-      const duration = 1 * 24 * 60 * 60 * 1000; 
+      const duration = 1 * 24 * 60 * 60 * 1000; // 24 hours
       const newEndTime = Date.now() + duration;
       const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'general');
       await setDoc(settingsRef, { auctionEnd: newEndTime }, { merge: true });
@@ -56,141 +56,24 @@ export default function AdminPanel({
       console.error(error);
     }
   };
-const handleDeleteUser = async (userId, userName) => {
-  if (window.confirm(`Delete ${userName}?`)) {
-    try {
-      // Use the 'db' and 'appId' props to find the specific user
-      const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', userId);
-      await deleteDoc(userRef);
-      showAlert(`${userName} has been removed.`, "info");
-    } catch (error) {
-      console.error(error);
-      showAlert("Failed to delete user. Check console.", "error");
-    }
-  }
-};
 
   return (
     <>
-      {/* --- ROW 1: USER & ITEM OVERVIEW --- */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
-          <div>
-            <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-1">Total Bidders</p>
-            <p className="text-4xl font-black" style={{ color: colors.mossGreen }}>{dbUsers.length}</p>
-          </div>
-          <div className="bg-green-50 p-3 rounded-full">
-            <User className="w-8 h-8 text-green-600" />
-          </div>
+      {/* --- AUCTION ANALYTICS DASHBOARD --- */}
+      <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 text-center">
+          <p className="text-gray-500 text-xs font-bold uppercase tracking-wider">Total Bidders</p>
+          <p className="text-3xl font-black" style={{ color: colors.mossGreen }}>{dbUsers.length}</p>
         </div>
-
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
-          <div>
-            <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-1">Total Items</p>
-            <p className="text-4xl font-black" style={{ color: colors.mossGreen }}>{items.length}</p>
-          </div>
-          <div className="bg-orange-50 p-3 rounded-full">
-            <Tag className="w-8 h-8 text-orange-600" />
-          </div>
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 text-center">
+          <p className="text-gray-500 text-xs font-bold uppercase tracking-wider">Total Items</p>
+          <p className="text-3xl font-black" style={{ color: colors.mossGreen }}>{items.length}</p>
         </div>
-      </div>
-
-      {/* --- ROW 2: WINNERS TABLE --- */}
-      <section className="bg-white rounded-2xl shadow-md border border-gray-100 overflow-hidden mb-8">
-        <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-          <h2 className="font-bold text-gray-700 flex items-center gap-2">
-            <Trophy className="w-5 h-5 text-orange-500" /> Current Winners & Final Prices
-          </h2>
-          <span className="text-xs font-medium text-gray-400 uppercase tracking-tighter">Live from Database</span>
-        </div>
-        
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-gray-50/50 text-[10px] uppercase tracking-widest text-gray-400 border-b border-gray-100">
-                <th className="px-6 py-4 font-black">Winner Name</th>
-                <th className="px-6 py-4 font-black">Item Won</th>
-                <th className="px-6 py-4 font-black">Winning Price</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {items && items.filter(item => item?.topBidder).length > 0 ? (
-                items.filter(item => item?.topBidder).map((item) => (
-                  <tr key={item.id} className="hover:bg-gray-50/80 transition-colors">
-                    <td className="px-6 py-4 font-semibold text-gray-700 uppercase">
-                      {item?.topBidder || "Unknown"}
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="text-sm text-gray-600">{item?.name || "Unnamed Item"}</span>
-                    </td>
-                    <td className="px-6 py-4 font-mono font-bold text-orange-600">
-                      K{item?.currentBid?.toLocaleString() || "0"}
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan="3" className="px-6 py-10 text-center text-gray-400 italic text-sm">
-                    No bids have been placed yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* --- ROW 3: REGISTERED BIDDERS DIRECTORY --- */}
-      <section className="bg-white rounded-2xl shadow-md border border-gray-100 overflow-hidden mb-8">
-        <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-          <h2 className="font-bold text-gray-700 flex items-center gap-2">
-            <User className="w-5 h-5 text-mossGreen" /> Registered Bidders Directory
-          </h2>
-          <span className="text-[10px] font-bold text-mossGreen bg-green-100 px-2 py-1 rounded-md uppercase">
-            {dbUsers.length} Users Total
-          </span>
-        </div>
-
-        <div className="overflow-y-auto max-h-[400px]">
-          <table className="w-full text-left border-collapse">
-            <thead>
-  <tr className="bg-gray-50/50 text-[10px] uppercase tracking-widest text-gray-400 border-b border-gray-100">
-    <th className="px-6 py-4 font-black">Name</th>
-    <th className="px-6 py-4 font-black">Credentials</th>
-    <th className="px-6 py-4 font-black">Joined</th>
-    <th className="px-6 py-4 font-black">Role</th>
-    <th className="px-6 py-4 font-black text-right">Actions</th> {/* New Column */}
-  </tr>
-</thead>
-<tbody className="divide-y divide-gray-50">
-  {dbUsers.map((u) => (
-    <tr key={u.id} className="hover:bg-gray-50/80 transition-colors text-sm">
-      <td className="px-6 py-4 font-bold text-gray-800 uppercase">{u.name}</td>
-      <td className="px-6 py-4 font-mono text-gray-500">{u.password}</td>
-      <td className="px-6 py-4 text-gray-400">
-        {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : 'N/A'}
-      </td>
-      <td className="px-6 py-4">
-        <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${u.role === 'admin' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
-          {u.role}
-        </span>
-      </td>
-      <td className="px-6 py-4 text-right">
-        {/* Only show delete button for non-admins (or allow deleting anyone but yourself) */}
-        {u.role !== 'admin' && (
-          <button 
-            onClick={() => handleDeleteUser(u.id, u.name)}
-            className="p-2 text-gray-400 hover:text-red-600 transition-colors"
-            title="Delete User"
-          >
-            <XCircle className="w-5 h-5" />
-          </button>
-        )}
-      </td>
-    </tr>
-  ))}
-</tbody>
-          </table>
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 text-center">
+          <p className="text-gray-500 text-xs font-bold uppercase tracking-wider">Total Revenue (K)</p>
+          <p className="text-3xl font-black text-orange-600">
+            {items.reduce((sum, i) => sum + (i.currentBid || 0), 0)}
+          </p>
         </div>
       </section>
 

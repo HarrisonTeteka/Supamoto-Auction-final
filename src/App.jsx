@@ -285,14 +285,9 @@ export default function App() {
         {user.role === 'admin' && (
           <Suspense fallback={<div className="p-8 text-center text-gray-500 font-bold animate-pulse">Loading Admin Tools...</div>}>
             <AdminPanel 
-      db={db}
-  appId={appId}
-  doc={doc}
-  setDoc={setDoc}
-  deleteDoc={deleteDoc} // ADD THIS LINE
-  showAlert={showAlert}
-  dbUsers={dbUsers}
-  items={items}
+      items={items}      // CRITICAL: Must pass this
+      dbUsers={dbUsers}  // CRITICAL: Must pass this
+      db={db} appId={appId} doc={doc} setDoc={setDoc} showAlert={showAlert}
       colors={colors} appSettings={appSettings} bgPreview={bgPreview} handleBgUpload={handleBgUpload} saveBgImage={saveBgImage}
       editingItemId={editingItemId} setEditingItemId={setEditingItemId}
       showCategoryForm={showCategoryForm} setShowCategoryForm={setShowCategoryForm} newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName} handleAddCategory={handleAddCategory}
