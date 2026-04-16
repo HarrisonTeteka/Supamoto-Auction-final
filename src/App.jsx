@@ -55,6 +55,7 @@ export default function App() {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [pendingUser, setPendingUser] = useState(null);
   const [timeLeft, setTimeLeft] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // --- Timer Helper ---
   const calculateTimeLeft = (target) => {
@@ -119,9 +120,12 @@ useEffect(() => {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setIsLoggingIn(true);
     const enteredName = loginForm.name.trim();
     const enteredPassword = loginForm.password.trim();
-    if (!enteredName || !enteredPassword) return showAlert("Please enter both name and password.", "error");
+    if (!enteredName || !enteredPassword) 
+      setIsLoggingIn(false);
+      return showAlert("Please enter both name and password.", "error");
     const existingUser = dbUsers.find(u => u.name.toLowerCase() === enteredName.toLowerCase());
     if (existingUser) {
       const passwordMatch = await bcrypt.compare(enteredPassword, existingUser.password);
@@ -281,7 +285,7 @@ const deleteItem = async (id) => {
               <input type="checkbox" checked={loginForm.isAdmin} onChange={() => {}} className="w-4 h-4 text-orange-500 rounded cursor-pointer" />
               <label className="text-sm font-medium flex items-center gap-2 text-gray-700 cursor-pointer"><Shield className="w-4 h-4 text-gray-500" /> I am a Bidder Master (Admin)</label>
             </div>
-            <button type="submit" style={{ backgroundColor: colors.tangerine }} className="w-full text-white font-bold py-3 rounded-xl shadow-md hover:opacity-90 transition-opacity mt-4">Enter Auction Arena</button>
+            <button type="submit" style={{ backgroundColor: colors.tangerine }} className="w-full text-white font-bold py-3 rounded-xl shadow-md hover:opacity-90 transition-opacity mt-4" disabled={isLoggingIn} >{isLoggingIn ? 'Logging in…' : 'Login'}</button>
           </form>
         </div>
       </div>
