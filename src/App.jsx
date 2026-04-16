@@ -1,7 +1,7 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, setDoc } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, setDoc, runTransaction } from 'firebase/firestore';
 import { 
   Flame, User, Trophy, Shield, Lock, Search, Plus, Edit2, 
   XCircle, Tag, ImagePlus, ChevronLeft, ChevronRight, MonitorSmartphone, AlertTriangle 
@@ -11,6 +11,7 @@ import Navbar from './components/Navbar';
 import AlertToast from './components/AlertToast';
 import AuctionCard from './components/AuctionCard';
 import bcrypt from 'bcryptjs';
+
 
 
 const firebaseConfig = {
@@ -160,16 +161,64 @@ if (passwordMatch) {
   };
 
   const placeBid = async (item) => {
-    const amt = parseFloat(bidInputs[item.id]);
-    if (isNaN(amt) || amt < (item.currentBid === 0 ? item.startPrice : item.currentBid + 1)) return showAlert("Invalid bid amount.", "error");
-    try {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id), {
-        currentBid: amt, topBidder: user.name, bids: [...(item.bids || []), { bidder: user.name, amount: amt, timestamp: Date.now() }]
+  const amt = parseFloat(bidInputs[item.id]);
+
+  // Basic front-end check first
+  if (isNaN(amt) || amt <= 0) {
+    return showAlert("Please enter a valid bid amount.", "error");
+  }
+
+  const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id);
+
+  try {
+    await runTransaction(db, async (transaction) => {
+      // Read the LIVE current state of the item from Firestore
+      const itemSnap = await transaction.get(itemRef);
+      if (!itemSnap.exists()) throw new Error("Item no longer exists.");
+
+      const liveItem = itemSnap.data();
+
+      // Check if auction is still open
+      if (liveItem.status === 'closed') {
+        throw new Error("This auction has already closed.");
+      }
+
+      // Calculate the minimum valid bid
+      const minBid = liveItem.currentBid === 0 
+        ? liveItem.startPrice 
+        : liveItem.currentBid + 1;
+
+      // Reject if bid is too low
+      if (amt < minBid) {
+        throw new Error(`Bid must be at least K${minBid}.`);
+      }
+
+      // Reject if somehow same person is already winning
+      if (liveItem.topBidder === user.name && liveItem.currentBid === amt) {
+        throw new Error("You are already the top bidder!");
+      }
+
+      // All checks passed — write the new bid atomically
+      transaction.update(itemRef, {
+        currentBid: amt,
+        topBidder: user.name,
+        bids: [...(liveItem.bids || []), { 
+          bidder: user.name, 
+          amount: amt, 
+          timestamp: Date.now() 
+        }]
       });
-      setBidInputs(prev => ({ ...prev, [item.id]: '' }));
-      showAlert(`Bid of K${amt} placed!`, "success");
-    } catch (err) { showAlert("Failed to connect.", "error"); }
-  };
+    });
+
+    // Only runs if transaction succeeded
+    setBidInputs(prev => ({ ...prev, [item.id]: '' }));
+    showAlert(`✅ Bid of K${amt.toLocaleString()} placed successfully!`, "success");
+
+  } catch (err) {
+    // Show the specific reason the bid failed
+    showAlert(err.message || "Failed to place bid. Try again.", "error");
+  }
+};
 
   const handleAddOrUpdateItem = async (e) => {
     e.preventDefault();
