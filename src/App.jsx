@@ -67,32 +67,40 @@ export default function App() {
     return `${hours.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
   };
 
-  // --- Initialization & Database Listeners ---
-  useEffect(() => {
-    const link = document.createElement('link');
-    link.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap';
-    link.rel = 'stylesheet';
-    document.head.appendChild(link);
+  // Loads on app start — items + settings only
+useEffect(() => {
+  const link = document.createElement('link');
+  link.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap';
+  link.rel = 'stylesheet';
+  document.head.appendChild(link);
 
-    const initAuth = async () => { try { await signInAnonymously(auth); } catch(e){} };
-    initAuth();
+  const initAuth = async () => { try { await signInAnonymously(auth); } catch(e){} };
+  initAuth();
 
-    const unsubItems = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'items'), (snap) => {
-      setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt));
-    });
-    const unsubCat = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'categories'), (snap) => {
-      const cats = snap.docs.map(d => d.data().name);
-      if (cats.length > 0) setCategories(cats);
-    });
-    const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), (snap) => {
-      setDbUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsubSettings = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'general'), (snap) => {
-      if (snap.exists()) setAppSettings(snap.data());
-    });
+  const unsubItems = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'items'), (snap) => {
+    setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt));
+  });
+  const unsubSettings = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'general'), (snap) => {
+    if (snap.exists()) setAppSettings(snap.data());
+  });
 
-    return () => { document.head.removeChild(link); unsubItems(); unsubCat(); unsubUsers(); unsubSettings(); };
-  }, []);
+  return () => { document.head.removeChild(link); unsubItems(); unsubSettings(); };
+}, []);
+
+// Loads ONLY after a user logs in
+useEffect(() => {
+  if (!user) return; // do nothing if not logged in
+
+  const unsubCat = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'categories'), (snap) => {
+    const cats = snap.docs.map(d => d.data().name);
+    if (cats.length > 0) setCategories(cats);
+  });
+  const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), (snap) => {
+    setDbUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  });
+
+  return () => { unsubCat(); unsubUsers(); };
+}, [user]); // re-runs whenever user logs in or out
 
   // --- Timer Tick ---
   useEffect(() => {
