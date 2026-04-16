@@ -130,7 +130,7 @@ if (passwordMatch) {
   const completeRegistration = async () => {
   if (!termsAccepted || !pendingUser) return;
   try {
-    const hashedPassword = await bcrypt.hash(pendingUser.password, 10);
+    const hashedPassword = await bcrypt.hash(pendingUser.password, 6);
     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'users'), { name: pendingUser.name, password: hashedPassword, role: 'user', createdAt: Date.now() });
 
       setUser({ name: pendingUser.name, role: 'user' });
