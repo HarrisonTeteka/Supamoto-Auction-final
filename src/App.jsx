@@ -95,6 +95,7 @@ useEffect(() => {
 
 // Loads ONLY after a user logs in
 // Loads ONLY after a user logs in (categories only)
+// Loads ONLY after a user logs in (categories + notifications)
 useEffect(() => {
   if (!user) return;
 
@@ -103,7 +104,23 @@ useEffect(() => {
     if (cats.length > 0) setCategories(cats);
   });
 
-  return () => { unsubCat(); };
+  const unsubNotifs = onSnapshot(
+    collection(db, 'artifacts', appId, 'public', 'data', 'notifications'),
+    (snap) => {
+      snap.docs.forEach(d => {
+        const notif = d.data();
+        if (notif.to === user.name && !notif.read) {
+          showAlert(`⚠️ ${notif.message}`, "error");
+          updateDoc(
+            doc(db, 'artifacts', appId, 'public', 'data', 'notifications', d.id), 
+            { read: true }
+          );
+        }
+      });
+    }
+  );
+
+  return () => { unsubCat(); unsubNotifs(); };
 }, [user]);
 
   // --- Timer Tick ---
@@ -126,11 +143,14 @@ useEffect(() => {
     setIsLoggingIn(true);
     const enteredName = loginForm.name.trim();
     const enteredPassword = loginForm.password.trim();
+
     if (!enteredName || !enteredPassword) {
-  setIsLoggingIn(false);
-  return showAlert("Please enter both name and password.", "error");
-}
-    const existingUser = dbUsers.find(u => u.name.toLowerCase() === enteredName.toLowerCase());
+      setIsLoggingIn(false);
+      return showAlert("Please enter both name and password.", "error");
+    }
+
+    const existingUser = dbUsers.find(u => u.name.toLowerCase() === enteredName.toLowerCase());    
+    
     if (existingUser) {
       const passwordMatch = await bcrypt.compare(enteredPassword, existingUser.password);
 if (passwordMatch) {
@@ -197,7 +217,21 @@ if (passwordMatch) {
       if (liveItem.topBidder === user.name && liveItem.currentBid === amt) {
         throw new Error("You are already the top bidder!");
       }
-
+            // Notify the previous top bidder they've been outbid
+      const previousTopBidder = liveItem.topBidder;
+      if (previousTopBidder && previousTopBidder !== user.name) {
+        // Store outbid notification in Firestore so they see it on next load
+        const notifRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'notifications'));
+        transaction.set(notifRef, {
+          to: previousTopBidder,
+          message: `You've been outbid on "${liveItem.name}"! New bid: K${amt.toLocaleString()}. Bid higher to stay in the lead.`,
+          itemId: item.id,
+          itemName: liveItem.name,
+          newBid: amt,
+          read: false,
+          timestamp: Date.now()
+        });
+      }
       // All checks passed — write the new bid atomically
       transaction.update(itemRef, {
         currentBid: amt,
@@ -342,6 +376,7 @@ const deleteItem = async (id) => {
               <input type="checkbox" checked={loginForm.isAdmin} onChange={() => {}} className="w-4 h-4 text-orange-500 rounded cursor-pointer" />
               <label className="text-sm font-medium flex items-center gap-2 text-gray-700 cursor-pointer"><Shield className="w-4 h-4 text-gray-500" /> I am a Bidder Master (Admin)</label>
             </div>
+            
             <button type="submit" style={{ backgroundColor: colors.tangerine }} className="w-full text-white font-bold py-3 rounded-xl shadow-md hover:opacity-90 transition-opacity mt-4" disabled={isLoggingIn} >{isLoggingIn ? 'Logging in…' : 'Login'}</button>
           </form>
         </div>
