@@ -252,9 +252,15 @@ export default function App() {
         await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', editingItemId), data);
         showAlert('Item updated!', 'success');
       } else {
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'items'), {
-          ...data, currentBid: 0, topBidder: null, status: 'open', bids: [], createdAt: Date.now()
-        });
+  const isShop = newItem.type === 'shop';
+  await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'items'), {
+    ...data,
+    type: isShop ? 'shop' : 'auction',
+    price: isShop ? parseFloat(newItem.price) : null,
+    stock: isShop ? parseInt(newItem.stock) : null,
+    purchases: isShop ? [] : null,
+    currentBid: 0, topBidder: null, status: 'open', bids: [], createdAt: Date.now()
+  });
         showAlert('Item added!', 'success');
       }
       setNewItem({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' });
