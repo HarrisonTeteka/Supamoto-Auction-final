@@ -125,9 +125,10 @@ useEffect(() => {
     setIsLoggingIn(true);
     const enteredName = loginForm.name.trim();
     const enteredPassword = loginForm.password.trim();
-    if (!enteredName || !enteredPassword) 
-      setIsLoggingIn(false);
-      return showAlert("Please enter both name and password.", "error");
+    if (!enteredName || !enteredPassword) {
+  setIsLoggingIn(false);
+  return showAlert("Please enter both name and password.", "error");
+}
     const existingUser = dbUsers.find(u => u.name.toLowerCase() === enteredName.toLowerCase());
     if (existingUser) {
       const passwordMatch = await bcrypt.compare(enteredPassword, existingUser.password);
@@ -136,9 +137,14 @@ if (passwordMatch) {
         showAlert(`Welcome ${existingUser.role === 'admin' ? 'Master' : 'back'}!`, "success");
       } else { showAlert("Incorrect password.", "error"); }
     } else {
-      if (loginForm.isAdmin) { showAlert("Admin account not found.", "error"); } 
-      else { setPendingUser({ name: enteredName, password: enteredPassword }); setShowTerms(true); }
+      if (loginForm.isAdmin) {
+      showAlert("Admin account not found.", "error");
+    } else {
+      setPendingUser({ name: enteredName, password: enteredPassword });
+      setShowTerms(true);
     }
+  }
+  setIsLoggingIn(false);
   };
 
   const completeRegistration = async () => {
