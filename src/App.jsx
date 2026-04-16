@@ -85,23 +85,25 @@ useEffect(() => {
     if (snap.exists()) setAppSettings(snap.data());
   });
 
-  return () => { document.head.removeChild(link); unsubItems(); unsubSettings(); };
+    const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), (snap) => {
+    setDbUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  });
+
+  return () => { document.head.removeChild(link); unsubItems(); unsubSettings(); unsubUsers(); };
 }, []);
 
 // Loads ONLY after a user logs in
+// Loads ONLY after a user logs in (categories only)
 useEffect(() => {
-  if (!user) return; // do nothing if not logged in
+  if (!user) return;
 
   const unsubCat = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'categories'), (snap) => {
     const cats = snap.docs.map(d => d.data().name);
     if (cats.length > 0) setCategories(cats);
   });
-  const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), (snap) => {
-    setDbUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-  });
 
-  return () => { unsubCat(); unsubUsers(); };
-}, [user]); // re-runs whenever user logs in or out
+  return () => { unsubCat(); };
+}, [user]);
 
   // --- Timer Tick ---
   useEffect(() => {
