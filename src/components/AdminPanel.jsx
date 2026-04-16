@@ -117,6 +117,40 @@ export default function AdminPanel({
       )}
     </div>
   </div>
+{/* ITEM TYPE TOGGLE + PRICE FIELDS */}
+<div className="flex flex-col gap-2">
+  <div className="flex gap-2 p-1 bg-gray-100 rounded-xl">
+    <button type="button"
+      onClick={() => setNewItem(prev => ({ ...prev, type: 'auction', price: '', stock: '' }))}
+      className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${(newItem.type || 'auction') === 'auction' ? 'bg-white shadow text-orange-600' : 'text-gray-500 hover:text-gray-700'}`}>
+      🔨 Auction
+    </button>
+    <button type="button"
+      onClick={() => setNewItem(prev => ({ ...prev, type: 'shop', startPrice: '' }))}
+      className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${newItem.type === 'shop' ? 'bg-white shadow text-green-600' : 'text-gray-500 hover:text-gray-700'}`}>
+      🏪 Shop Item
+    </button>
+  </div>
+
+  {(newItem.type || 'auction') === 'auction' ? (
+    <input required type="number" min="1" placeholder="Start Price (K)"
+      value={newItem.startPrice}
+      onChange={e => setNewItem({...newItem, startPrice: e.target.value})}
+      className="px-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-orange-400 transition-shadow" />
+  ) : (
+    <div className="flex gap-2">
+      <input required type="number" min="1" placeholder="Fixed Price (K)"
+        value={newItem.price || ''}
+        onChange={e => setNewItem({...newItem, price: e.target.value})}
+        className="flex-1 px-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-green-400 transition-shadow" />
+      <input required type="number" min="1" placeholder="Stock Qty"
+        value={newItem.stock || ''}
+        onChange={e => setNewItem({...newItem, stock: e.target.value})}
+        className="w-24 px-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-green-400 transition-shadow" />
+    </div>
+  )}
+</div>
+
 
   {/* Items Panel */}
   <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -322,7 +356,7 @@ export default function AdminPanel({
               </div>
               <div className="flex gap-2 w-full xl:w-auto">
                 <button type="submit" style={{ backgroundColor: editingItemId ? colors.tangerine : colors.mossGreen }} className="text-white px-8 py-2 rounded-lg hover:opacity-90 transition-opacity font-semibold whitespace-nowrap flex-1 xl:flex-none">{editingItemId ? 'Update Item' : 'Add Item'}</button>
-                {editingItemId && <button type="button" onClick={() => { setEditingItemId(null); setNewItem({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' }); setImagePreview(null); setImagePreview2(null); }} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors flex-1 xl:flex-none"><XCircle className="w-5 h-5 mx-auto" /></button>}
+                {editingItemId && <button type="button" onClick={() => { setEditingItemId(null); setNewItem({ name: '', desc: '', startPrice: '', price: '', stock: '', type: 'auction', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' }); setImagePreview(null); setImagePreview2(null); }} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors flex-1 xl:flex-none"><XCircle className="w-5 h-5 mx-auto" /></button>}
               </div>
             </div>
           </div>
