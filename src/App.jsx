@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, setDoc, runTransaction } from 'firebase/firestore';
@@ -20,7 +20,7 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
-const AdminPanel = lazy(() => import('./components/AdminPanel'));
+import AdminPanel from './components/AdminPanel';
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -51,18 +51,30 @@ export default function App() {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [pendingUser, setPendingUser] = useState(null);
   const [timeLeft, setTimeLeft] = useState('');
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
+const [isLoggingIn, setIsLoggingIn] = useState(false);
+const [auctionStartInput, setAuctionStartInput] = useState('');
+const [auctionEndInput, setAuctionEndInput] = useState('');
 
   // --- Timer Helper ---
-  const calculateTimeLeft = (target) => {
-    if (!target) return null;
-    const difference = target - Date.now();
-    if (difference <= 0) return 'AUCTION CLOSED';
-    const hours = Math.floor(difference / (1000 * 60 * 60));
-    const mins = Math.floor((difference / 1000 / 60) % 60);
-    const secs = Math.floor((difference / 1000) % 60);
-    return `${hours.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
-  };
+ const calculateTimeLeft = (start, end) => {
+  if (!end) return null;
+
+  const now = Date.now();
+
+  if (start && now < start) {
+    return 'NOT STARTED';
+  }
+
+  const difference = end - now;
+
+  if (difference <= 0) return 'AUCTION CLOSED';
+
+  const hours = Math.floor(difference / (1000 * 60 * 60));
+  const mins = Math.floor((difference / 1000 / 60) % 60);
+  const secs = Math.floor((difference / 1000) % 60);
+
+  return `${hours.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
+};
 
   // --- Load on app start ---
   useEffect(() => {
@@ -110,19 +122,32 @@ export default function App() {
   }, [user]);
 
   // --- Timer Tick ---
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft(calculateTimeLeft(appSettings?.auctionEnd));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [appSettings?.auctionEnd]);
+ useEffect(() => {
+  const timer = setInterval(() => {
+    setTimeLeft(calculateTimeLeft(appSettings?.auctionStart, appSettings?.auctionEnd));
+  }, 1000);
 
+  setTimeLeft(calculateTimeLeft(appSettings?.auctionStart, appSettings?.auctionEnd));
+
+  return () => clearInterval(timer);
+}, [appSettings?.auctionStart, appSettings?.auctionEnd]);
   // --- Alert Helper ---
   const showAlert = (message, type = 'info') => {
     const id = Date.now();
     setAlerts(prev => [...prev, { id, message, type }]);
     setTimeout(() => setAlerts(prev => prev.filter(a => a.id !== id)), 4000);
   };
+  useEffect(() => {
+  const formatForDateTimeLocal = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    const pad = (num) => String(num).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  setAuctionStartInput(formatForDateTimeLocal(appSettings?.auctionStart));
+  setAuctionEndInput(formatForDateTimeLocal(appSettings?.auctionEnd));
+}, [appSettings?.auctionStart, appSettings?.auctionEnd]);
 
   // --- Login ---
   const handleLogin = async (e) => {
@@ -428,21 +453,41 @@ export default function App() {
 
         {/* ADMIN PANEL */}
         {user.role === 'admin' && (
-          <Suspense fallback={<div className="p-8 text-center text-gray-500 font-bold animate-pulse">Loading Admin Tools...</div>}>
-            <AdminPanel
-              items={items}
-              dbUsers={dbUsers}
-              db={db} appId={appId} doc={doc} setDoc={setDoc} showAlert={showAlert}
-              colors={colors} appSettings={appSettings} bgPreview={bgPreview} handleBgUpload={handleBgUpload} saveBgImage={saveBgImage}
-              editingItemId={editingItemId} setEditingItemId={setEditingItemId}
-              showCategoryForm={showCategoryForm} setShowCategoryForm={setShowCategoryForm}
-              newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName} handleAddCategory={handleAddCategory}
-              newItem={newItem} setNewItem={setNewItem} categories={categories} handleAddOrUpdateItem={handleAddOrUpdateItem}
-              handleImageUpload={handleImageUpload} imagePreview={imagePreview} imagePreview2={imagePreview2}
-              setImagePreview={setImagePreview} setImagePreview2={setImagePreview2}
-            />
-          </Suspense>
-        )}
+  <AdminPanel
+    items={items}
+    dbUsers={dbUsers}
+    db={db}
+    appId={appId}
+    doc={doc}
+    setDoc={setDoc}
+    showAlert={showAlert}
+    colors={colors}
+    appSettings={appSettings}
+    bgPreview={bgPreview}
+    handleBgUpload={handleBgUpload}
+    saveBgImage={saveBgImage}
+    editingItemId={editingItemId}
+    setEditingItemId={setEditingItemId}
+    showCategoryForm={showCategoryForm}
+    setShowCategoryForm={setShowCategoryForm}
+    newCategoryName={newCategoryName}
+    setNewCategoryName={setNewCategoryName}
+    handleAddCategory={handleAddCategory}
+    newItem={newItem}
+    setNewItem={setNewItem}
+    categories={categories}
+    handleAddOrUpdateItem={handleAddOrUpdateItem}
+    handleImageUpload={handleImageUpload}
+    imagePreview={imagePreview}
+    imagePreview2={imagePreview2}
+    setImagePreview={setImagePreview}
+    setImagePreview2={setImagePreview2}
+    auctionStartInput={auctionStartInput}
+    setAuctionStartInput={setAuctionStartInput}
+    auctionEndInput={auctionEndInput}
+    setAuctionEndInput={setAuctionEndInput}
+  />
+)}
 
         {/* WELCOME BANNER */}
         {user.role === 'user' && (

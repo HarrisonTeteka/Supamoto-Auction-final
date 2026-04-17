@@ -14,7 +14,8 @@ export default function AdminPanel({
   editingItemId, setEditingItemId,
   showCategoryForm, setShowCategoryForm, newCategoryName, setNewCategoryName, handleAddCategory,
   newItem, setNewItem, categories, handleAddOrUpdateItem,
-  handleImageUpload, imagePreview, imagePreview2, setImagePreview, setImagePreview2
+  handleImageUpload, imagePreview, imagePreview2, setImagePreview, setImagePreview2,
+auctionStartInput, setAuctionStartInput, auctionEndInput, setAuctionEndInput
 }) {
 
   // --- Export Logic ---
@@ -47,19 +48,35 @@ export default function AdminPanel({
   };
 
   // --- Timer Logic ---
-  const resetAuctionTimer = async () => {
-    try {
-      const duration = 1 * 24 * 60 * 60 * 1000; // 24 hours
-      const newEndTime = Date.now() + duration;
-      const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'general');
-      await setDoc(settingsRef, { auctionEnd: newEndTime }, { merge: true });
-      
-      if (showAlert) showAlert("Auction timer reset for 24 hours!", "success");
-    } catch (error) {
-      if (showAlert) showAlert("Failed to reset timer", "error");
-      console.error(error);
-    }
-  };
+  const saveAuctionSchedule = async () => {
+  if (!auctionStartInput || !auctionEndInput) {
+    if (showAlert) showAlert("Please select both start and end time.", "error");
+    return;
+  }
+
+  const startTime = new Date(auctionStartInput).getTime();
+  const endTime = new Date(auctionEndInput).getTime();
+
+  if (isNaN(startTime) || isNaN(endTime)) {
+    if (showAlert) showAlert("Invalid date/time selected.", "error");
+    return;
+  }
+
+  if (endTime <= startTime) {
+    if (showAlert) showAlert("End time must be after start time.", "error");
+    return;
+  }
+
+  try {
+    const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'general');
+    await setDoc(settingsRef, { auctionStart: startTime, auctionEnd: endTime }, { merge: true });
+
+    if (showAlert) showAlert("Auction schedule saved successfully!", "success");
+  } catch (error) {
+    if (showAlert) showAlert("Failed to save auction schedule.", "error");
+    console.error(error);
+  }
+};
 
   return (
     <>
@@ -232,19 +249,42 @@ export default function AdminPanel({
 
       {/* --- MASTER TIMER SECTION --- */}
       <section className="bg-white rounded-xl shadow-md border-t-4 p-6 mb-8 transition-all border-red-500">
-        <h2 className="text-xl font-bold flex items-center gap-2 mb-2 text-red-600">
-          <Clock className="w-5 h-5" /> Master Auction Timer
-        </h2>
-        <p className="text-sm text-gray-500 mb-4">
-          This will reset the countdown to exactly 24 hours for all users.
-        </p>
-        <button 
-          onClick={resetAuctionTimer}
-          className="w-full md:w-auto px-6 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
-        >
-          Restart 24-Hour Countdown
-        </button>
-      </section>
+  <h2 className="text-xl font-bold flex items-center gap-2 mb-2 text-red-600">
+    <Clock className="w-5 h-5" /> Auction Schedule
+  </h2>
+  <p className="text-sm text-gray-500 mb-4">
+    Set the exact start and end date/time for the auction.
+  </p>
+
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
+      <input
+        type="datetime-local"
+        value={auctionStartInput}
+        onChange={(e) => setAuctionStartInput(e.target.value)}
+        className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-red-400 transition-shadow"
+      />
+    </div>
+
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">End Time</label>
+      <input
+        type="datetime-local"
+        value={auctionEndInput}
+        onChange={(e) => setAuctionEndInput(e.target.value)}
+        className="w-full px-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-red-400 transition-shadow"
+      />
+    </div>
+  </div>
+
+  <button
+    onClick={saveAuctionSchedule}
+    className="w-full md:w-auto px-6 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+  >
+    Save Auction Schedule
+  </button>
+</section>
 
       {/* --- LOGIN BACKGROUND SECTION --- */}
       <section className="bg-white rounded-xl shadow-md border-t-4 p-6 mb-8 transition-all" style={{ borderColor: colors.mossGreen }}>
