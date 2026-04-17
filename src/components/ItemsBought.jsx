@@ -9,6 +9,8 @@ export default function ItemsBought({ items, user, colors }) {
 
   if (boughtItems.length === 0) return null;
 
+  const total = boughtItems.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+
   return (
     <div className="bg-white rounded-xl shadow-sm p-6 mb-8 border border-gray-200">
       <h2 className="text-lg font-bold mb-4 flex items-center gap-2" style={{ color: colors.mossGreen }}>
@@ -32,7 +34,7 @@ export default function ItemsBought({ items, user, colors }) {
               </div>
               <div className="text-right">
                 <p className="font-black text-base" style={{ color: colors.tangerine }}>
-                  K{purchase?.amount?.toLocaleString()}
+                  K{Number(item.price || 0).toLocaleString()}
                 </p>
                 <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">
                   Reserved ✅
@@ -45,10 +47,7 @@ export default function ItemsBought({ items, user, colors }) {
       <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
         <span className="text-sm text-gray-500 font-medium">Total Reserved</span>
         <span className="font-black text-lg" style={{ color: colors.mossGreen }}>
-          K{boughtItems.reduce((sum, item) => {
-            const p = (item.purchases || []).find(p => p.buyer === user.name);
-            return sum + (p?.amount || 0);
-          }, 0).toLocaleString()}
+          K{total.toLocaleString()}
         </span>
       </div>
     </div>
