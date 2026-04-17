@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, setDoc, runTransaction } from 'firebase/firestore';
@@ -20,11 +20,24 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
-import AdminPanel from './components/AdminPanel';
+const AdminPanel = lazy(() => import('./components/AdminPanel'));
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'supamoto-auction-2026';
+
+// --- Timer Helper (outside component to avoid re-creation on every render) ---
+const calculateTimeLeft = (start, end) => {
+  if (!end) return null;
+  const now = Date.now();
+  if (start && now < start) return 'NOT STARTED';
+  const difference = end - now;
+  if (difference <= 0) return 'AUCTION CLOSED';
+  const hours = Math.floor(difference / (1000 * 60 * 60));
+  const mins = Math.floor((difference / 1000 / 60) % 60);
+  const secs = Math.floor((difference / 1000) % 60);
+  return `${hours.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
+};
 
 export default function App() {
   const colors = { tangerine: '#F58202', mossGreen: '#336021', auburn: '#9E2A2B', cornsilk: '#F9EDCC' };
@@ -51,30 +64,9 @@ export default function App() {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [pendingUser, setPendingUser] = useState(null);
   const [timeLeft, setTimeLeft] = useState('');
-const [isLoggingIn, setIsLoggingIn] = useState(false);
-const [auctionStartInput, setAuctionStartInput] = useState('');
-const [auctionEndInput, setAuctionEndInput] = useState('');
-
-  // --- Timer Helper ---
- const calculateTimeLeft = (start, end) => {
-  if (!end) return null;
-
-  const now = Date.now();
-
-  if (start && now < start) {
-    return 'NOT STARTED';
-  }
-
-  const difference = end - now;
-
-  if (difference <= 0) return 'AUCTION CLOSED';
-
-  const hours = Math.floor(difference / (1000 * 60 * 60));
-  const mins = Math.floor((difference / 1000 / 60) % 60);
-  const secs = Math.floor((difference / 1000) % 60);
-
-  return `${hours.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
-};
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [auctionStartInput, setAuctionStartInput] = useState('');
+  const [auctionEndInput, setAuctionEndInput] = useState('');
 
   // --- Load on app start ---
   useEffect(() => {
@@ -99,6 +91,18 @@ const [auctionEndInput, setAuctionEndInput] = useState('');
     return () => { document.head.removeChild(link); unsubItems(); unsubSettings(); unsubUsers(); };
   }, []);
 
+  // --- Pre-fill auction schedule inputs when settings load ---
+  useEffect(() => {
+    const pad = (n) => String(n).padStart(2, '0');
+    const fmt = (ts) => {
+      if (!ts) return '';
+      const d = new Date(ts);
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+    setAuctionStartInput(fmt(appSettings?.auctionStart));
+    setAuctionEndInput(fmt(appSettings?.auctionEnd));
+  }, [appSettings?.auctionStart, appSettings?.auctionEnd]);
+
   // --- Load after login ---
   useEffect(() => {
     if (!user) return;
@@ -108,46 +112,50 @@ const [auctionEndInput, setAuctionEndInput] = useState('');
       if (cats.length > 0) setCategories(cats);
     });
 
-    const unsubNotifs = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'notifications'), (snap) => {
-      snap.docs.forEach(d => {
-        const notif = d.data();
-        if (notif.to === user.name && !notif.read) {
-          showAlert(`⚠️ ${notif.message}`, 'error');
-          updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', d.id), { read: true });
-        }
-      });
-    });
+    const unsubNotifs = onSnapshot(
+      collection(db, 'artifacts', appId, 'public', 'data', 'notifications'),
+      (snap) => {
+        const unread = snap.docs.filter(d => {
+          const n = d.data();
+          return n.to === user.name && !n.read;
+        });
+
+        if (unread.length === 0) return;
+
+        unread.forEach(d => {
+          showAlert(`⚠️ ${d.data().message}`, 'error');
+        });
+
+        Promise.all(
+          unread.map(d =>
+            updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', d.id), { read: true })
+          )
+        ).catch(console.error);
+      }
+    );
 
     return () => { unsubCat(); unsubNotifs(); };
   }, [user]);
 
   // --- Timer Tick ---
- useEffect(() => {
-  const timer = setInterval(() => {
-    setTimeLeft(calculateTimeLeft(appSettings?.auctionStart, appSettings?.auctionEnd));
-  }, 1000);
+  useEffect(() => {
+    const tick = () => setTimeLeft(calculateTimeLeft(appSettings?.auctionStart, appSettings?.auctionEnd));
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [appSettings?.auctionStart, appSettings?.auctionEnd]);
 
-  setTimeLeft(calculateTimeLeft(appSettings?.auctionStart, appSettings?.auctionEnd));
+  // --- Auction Closed Lockout ---
+  const isAuctionClosed = () => {
+    return appSettings?.auctionEnd && Date.now() >= appSettings.auctionEnd;
+  };
 
-  return () => clearInterval(timer);
-}, [appSettings?.auctionStart, appSettings?.auctionEnd]);
   // --- Alert Helper ---
   const showAlert = (message, type = 'info') => {
     const id = Date.now();
     setAlerts(prev => [...prev, { id, message, type }]);
     setTimeout(() => setAlerts(prev => prev.filter(a => a.id !== id)), 4000);
   };
-  useEffect(() => {
-  const formatForDateTimeLocal = (timestamp) => {
-    if (!timestamp) return '';
-    const date = new Date(timestamp);
-    const pad = (num) => String(num).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  };
-
-  setAuctionStartInput(formatForDateTimeLocal(appSettings?.auctionStart));
-  setAuctionEndInput(formatForDateTimeLocal(appSettings?.auctionEnd));
-}, [appSettings?.auctionStart, appSettings?.auctionEnd]);
 
   // --- Login ---
   const handleLogin = async (e) => {
@@ -200,14 +208,13 @@ const [auctionEndInput, setAuctionEndInput] = useState('');
 
   // --- Place Bid ---
   const placeBid = async (item) => {
-    const amt = parseFloat(bidInputs[item.id]);
-
-    if (isNaN(amt) || amt <= 0) {
-      return showAlert('Please enter a valid bid amount.', 'error');
+    if (user?.role !== 'admin' && isAuctionClosed()) {
+      return showAlert('The auction has closed. Bidding is locked.', 'error');
     }
+    const amt = parseFloat(bidInputs[item.id]);
+    if (isNaN(amt) || amt <= 0) return showAlert('Please enter a valid bid amount.', 'error');
 
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id);
-
     try {
       await runTransaction(db, async (transaction) => {
         const itemSnap = await transaction.get(itemRef);
@@ -241,25 +248,25 @@ const [auctionEndInput, setAuctionEndInput] = useState('');
   // --- Buy Shop Item ---
   const buyItem = async (item) => {
     if (!user) return;
+    if (user?.role !== 'admin' && isAuctionClosed()) {
+      return showAlert('The auction has closed. Access is locked.', 'error');
+    }
     const alreadyBought = (item.purchases || []).some(p => p.buyer === user.name);
     if (alreadyBought) return showAlert('You have already reserved this item.', 'error');
     if (item.stock <= 0) return showAlert('Sorry, this item is out of stock.', 'error');
 
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id);
-
     try {
       await runTransaction(db, async (transaction) => {
         const itemSnap = await transaction.get(itemRef);
         if (!itemSnap.exists()) throw new Error('Item no longer exists.');
         const liveItem = itemSnap.data();
-        if (liveItem.stock <= 0) throw new Error('Sorry, this item is now out of stock.');
-        const alreadyBoughtLive = (liveItem.purchases || []).some(p => p.buyer === user.name);
-        if (alreadyBoughtLive) throw new Error('You have already reserved this item.');
+        if (liveItem.stock <= 0) throw new Error('Out of stock.');
+        const alreadyIn = (liveItem.purchases || []).some(p => p.buyer === user.name);
+        if (alreadyIn) throw new Error('You have already reserved this item.');
         transaction.update(itemRef, {
           stock: liveItem.stock - 1,
-          purchases: [...(liveItem.purchases || []), {
-            buyer: user.name, amount: liveItem.price, timestamp: Date.now()
-          }]
+          purchases: [...(liveItem.purchases || []), { buyer: user.name, timestamp: Date.now() }]
         });
       });
       showAlert(`✅ "${item.name}" reserved for K${item.price.toLocaleString()}!`, 'success');
@@ -277,15 +284,15 @@ const [auctionEndInput, setAuctionEndInput] = useState('');
         await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', editingItemId), data);
         showAlert('Item updated!', 'success');
       } else {
-  const isShop = newItem.type === 'shop';
-  await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'items'), {
-    ...data,
-    type: isShop ? 'shop' : 'auction',
-    price: isShop ? parseFloat(newItem.price) : null,
-    stock: isShop ? parseInt(newItem.stock) : null,
-    purchases: isShop ? [] : null,
-    currentBid: 0, topBidder: null, status: 'open', bids: [], createdAt: Date.now()
-  });
+        const isShop = newItem.type === 'shop';
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'items'), {
+          ...data,
+          type: isShop ? 'shop' : 'auction',
+          price: isShop ? parseFloat(newItem.price) : null,
+          stock: isShop ? parseInt(newItem.stock) : null,
+          purchases: isShop ? [] : null,
+          currentBid: 0, topBidder: null, status: 'open', bids: [], createdAt: Date.now()
+        });
         showAlert('Item added!', 'success');
       }
       setNewItem({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' });
@@ -429,6 +436,33 @@ const [auctionEndInput, setAuctionEndInput] = useState('');
   }
 
   // ==========================================
+  // AUCTION CLOSED LOCKOUT (non-admin users)
+  // ==========================================
+  if (user?.role !== 'admin' && isAuctionClosed()) {
+    return (
+      <div style={{ fontFamily: "'Poppins', sans-serif", backgroundColor: colors.cornsilk }} className="min-h-screen flex items-center justify-center p-6 text-[#336021]">
+        <AlertToast alerts={alerts} colors={colors} />
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 border-t-8 text-center" style={{ borderColor: colors.auburn }}>
+          <div className="flex justify-center mb-4">
+            <div style={{ backgroundColor: colors.auburn }} className="p-4 rounded-full shadow-md">
+              <Lock className="w-10 h-10 text-white" />
+            </div>
+          </div>
+          <h1 className="text-2xl font-bold mb-3" style={{ color: colors.auburn }}>Auction Closed</h1>
+          <p className="text-gray-600 mb-6">This auction has ended. Bidder access is now locked. Please contact the admin if you need help.</p>
+          <button
+            onClick={() => { setUser(null); setLoginForm({ name: '', password: '', isAdmin: false }); }}
+            style={{ backgroundColor: colors.mossGreen }}
+            className="w-full text-white font-bold py-3 rounded-xl shadow-md hover:opacity-90 transition-opacity"
+          >
+            Back to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ==========================================
   // MAIN APP VIEW
   // ==========================================
   const filteredItems = items.filter(i =>
@@ -453,41 +487,23 @@ const [auctionEndInput, setAuctionEndInput] = useState('');
 
         {/* ADMIN PANEL */}
         {user.role === 'admin' && (
-  <AdminPanel
-    items={items}
-    dbUsers={dbUsers}
-    db={db}
-    appId={appId}
-    doc={doc}
-    setDoc={setDoc}
-    showAlert={showAlert}
-    colors={colors}
-    appSettings={appSettings}
-    bgPreview={bgPreview}
-    handleBgUpload={handleBgUpload}
-    saveBgImage={saveBgImage}
-    editingItemId={editingItemId}
-    setEditingItemId={setEditingItemId}
-    showCategoryForm={showCategoryForm}
-    setShowCategoryForm={setShowCategoryForm}
-    newCategoryName={newCategoryName}
-    setNewCategoryName={setNewCategoryName}
-    handleAddCategory={handleAddCategory}
-    newItem={newItem}
-    setNewItem={setNewItem}
-    categories={categories}
-    handleAddOrUpdateItem={handleAddOrUpdateItem}
-    handleImageUpload={handleImageUpload}
-    imagePreview={imagePreview}
-    imagePreview2={imagePreview2}
-    setImagePreview={setImagePreview}
-    setImagePreview2={setImagePreview2}
-    auctionStartInput={auctionStartInput}
-    setAuctionStartInput={setAuctionStartInput}
-    auctionEndInput={auctionEndInput}
-    setAuctionEndInput={setAuctionEndInput}
-  />
-)}
+          <Suspense fallback={<div className="p-8 text-center text-gray-500 font-bold animate-pulse">Loading Admin Tools...</div>}>
+            <AdminPanel
+              items={items}
+              dbUsers={dbUsers}
+              db={db} appId={appId} doc={doc} setDoc={setDoc} showAlert={showAlert}
+              colors={colors} appSettings={appSettings} bgPreview={bgPreview} handleBgUpload={handleBgUpload} saveBgImage={saveBgImage}
+              editingItemId={editingItemId} setEditingItemId={setEditingItemId}
+              showCategoryForm={showCategoryForm} setShowCategoryForm={setShowCategoryForm}
+              newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName} handleAddCategory={handleAddCategory}
+              newItem={newItem} setNewItem={setNewItem} categories={categories} handleAddOrUpdateItem={handleAddOrUpdateItem}
+              handleImageUpload={handleImageUpload} imagePreview={imagePreview} imagePreview2={imagePreview2}
+              setImagePreview={setImagePreview} setImagePreview2={setImagePreview2}
+              auctionStartInput={auctionStartInput} setAuctionStartInput={setAuctionStartInput}
+              auctionEndInput={auctionEndInput} setAuctionEndInput={setAuctionEndInput}
+            />
+          </Suspense>
+        )}
 
         {/* WELCOME BANNER */}
         {user.role === 'user' && (
