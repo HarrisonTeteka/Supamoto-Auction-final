@@ -8,7 +8,6 @@ import Navbar from './components/Navbar';
 import AlertToast from './components/AlertToast';
 import AuctionCard from './components/AuctionCard';
 import ItemsBought from './components/ItemsBought';
-import bcrypt from 'bcryptjs';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -26,7 +25,38 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'supamoto-auction-2026';
 
-// --- Timer Helper (outside component to avoid re-creation on every render) ---
+// --- Web Crypto password hashing (non-blocking, replaces bcryptjs) ---
+const hashPassword = async (password) => {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const hashBits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    keyMaterial, 256
+  );
+  const hashArray = Array.from(new Uint8Array(hashBits));
+  const saltArray = Array.from(salt);
+  return JSON.stringify({ salt: saltArray, hash: hashArray });
+};
+
+const verifyPassword = async (password, stored) => {
+  try {
+    const { salt, hash } = JSON.parse(stored);
+    const enc = new TextEncoder();
+    const saltUint8 = new Uint8Array(salt);
+    const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+    const hashBits = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt: saltUint8, iterations: 100000, hash: 'SHA-256' },
+      keyMaterial, 256
+    );
+    const newHash = Array.from(new Uint8Array(hashBits));
+    return JSON.stringify(newHash) === JSON.stringify(hash);
+  } catch {
+    return false;
+  }
+};
+
+// --- Timer Helper (outside component to prevent re-creation on every render) ---
 const calculateTimeLeft = (start, end) => {
   if (!end) return null;
   const now = Date.now();
@@ -119,13 +149,8 @@ export default function App() {
           const n = d.data();
           return n.to === user.name && !n.read;
         });
-
         if (unread.length === 0) return;
-
-        unread.forEach(d => {
-          showAlert(`⚠️ ${d.data().message}`, 'error');
-        });
-
+        unread.forEach(d => showAlert(`⚠️ ${d.data().message}`, 'error'));
         Promise.all(
           unread.map(d =>
             updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', d.id), { read: true })
@@ -145,10 +170,8 @@ export default function App() {
     return () => clearInterval(timer);
   }, [appSettings?.auctionStart, appSettings?.auctionEnd]);
 
-  // --- Auction Closed Lockout ---
-  const isAuctionClosed = () => {
-    return appSettings?.auctionEnd && Date.now() >= appSettings.auctionEnd;
-  };
+  // --- Auction Closed Check ---
+  const isAuctionClosed = () => appSettings?.auctionEnd && Date.now() >= appSettings.auctionEnd;
 
   // --- Alert Helper ---
   const showAlert = (message, type = 'info') => {
@@ -172,7 +195,7 @@ export default function App() {
     const existingUser = dbUsers.find(u => u.name.toLowerCase() === enteredName.toLowerCase());
 
     if (existingUser) {
-      const passwordMatch = await bcrypt.compare(enteredPassword, existingUser.password);
+      const passwordMatch = await verifyPassword(enteredPassword, existingUser.password);
       if (passwordMatch) {
         setUser({ name: existingUser.name, role: existingUser.role });
         showAlert(`Welcome ${existingUser.role === 'admin' ? 'Master' : 'back'}!`, 'success');
@@ -194,7 +217,7 @@ export default function App() {
   const completeRegistration = async () => {
     if (!termsAccepted || !pendingUser) return;
     try {
-      const hashedPassword = await bcrypt.hash(pendingUser.password, 6);
+      const hashedPassword = await hashPassword(pendingUser.password);
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'users'), {
         name: pendingUser.name, password: hashedPassword, role: 'user', createdAt: Date.now()
       });
@@ -208,12 +231,9 @@ export default function App() {
 
   // --- Place Bid ---
   const placeBid = async (item) => {
-    if (user?.role !== 'admin' && isAuctionClosed()) {
-      return showAlert('The auction has closed. Bidding is locked.', 'error');
-    }
+    if (user?.role !== 'admin' && isAuctionClosed()) return showAlert('The auction has closed. Bidding is locked.', 'error');
     const amt = parseFloat(bidInputs[item.id]);
     if (isNaN(amt) || amt <= 0) return showAlert('Please enter a valid bid amount.', 'error');
-
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id);
     try {
       await runTransaction(db, async (transaction) => {
@@ -248,13 +268,10 @@ export default function App() {
   // --- Buy Shop Item ---
   const buyItem = async (item) => {
     if (!user) return;
-    if (user?.role !== 'admin' && isAuctionClosed()) {
-      return showAlert('The auction has closed. Access is locked.', 'error');
-    }
+    if (user?.role !== 'admin' && isAuctionClosed()) return showAlert('The auction has closed. Access is locked.', 'error');
     const alreadyBought = (item.purchases || []).some(p => p.buyer === user.name);
     if (alreadyBought) return showAlert('You have already reserved this item.', 'error');
     if (item.stock <= 0) return showAlert('Sorry, this item is out of stock.', 'error');
-
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id);
     try {
       await runTransaction(db, async (transaction) => {
@@ -350,7 +367,7 @@ export default function App() {
 
   // --- Close Auction ---
   const closeAuction = async (item) => {
-    const topBidder = item.topBidder ? ` Winner will be: ${item.topBidder} (K${item.currentBid}).` : ' No bids placed yet.';
+    const topBidder = item.topBidder ? ` Winner: ${item.topBidder} (K${item.currentBid}).` : ' No bids placed yet.';
     if (window.confirm(`Close auction for "${item.name}"?${topBidder} This cannot be undone.`)) {
       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id), { status: 'closed' });
       showAlert('Auction closed successfully.', 'info');
@@ -440,7 +457,7 @@ export default function App() {
   // ==========================================
   if (user?.role !== 'admin' && isAuctionClosed()) {
     return (
-      <div style={{ fontFamily: "'Poppins', sans-serif", backgroundColor: colors.cornsilk }} className="min-h-screen flex items-center justify-center p-6 text-[#336021]">
+      <div style={{ fontFamily: "'Poppins', sans-serif", backgroundColor: colors.cornsilk }} className="min-h-screen flex items-center justify-center p-6">
         <AlertToast alerts={alerts} colors={colors} />
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 border-t-8 text-center" style={{ borderColor: colors.auburn }}>
           <div className="flex justify-center mb-4">
@@ -489,16 +506,18 @@ export default function App() {
         {user.role === 'admin' && (
           <Suspense fallback={<div className="p-8 text-center text-gray-500 font-bold animate-pulse">Loading Admin Tools...</div>}>
             <AdminPanel
-              items={items}
-              dbUsers={dbUsers}
+              items={items} dbUsers={dbUsers}
               db={db} appId={appId} doc={doc} setDoc={setDoc} showAlert={showAlert}
-              colors={colors} appSettings={appSettings} bgPreview={bgPreview} handleBgUpload={handleBgUpload} saveBgImage={saveBgImage}
+              colors={colors} appSettings={appSettings} bgPreview={bgPreview}
+              handleBgUpload={handleBgUpload} saveBgImage={saveBgImage}
               editingItemId={editingItemId} setEditingItemId={setEditingItemId}
               showCategoryForm={showCategoryForm} setShowCategoryForm={setShowCategoryForm}
-              newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName} handleAddCategory={handleAddCategory}
-              newItem={newItem} setNewItem={setNewItem} categories={categories} handleAddOrUpdateItem={handleAddOrUpdateItem}
-              handleImageUpload={handleImageUpload} imagePreview={imagePreview} imagePreview2={imagePreview2}
-              setImagePreview={setImagePreview} setImagePreview2={setImagePreview2}
+              newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName}
+              handleAddCategory={handleAddCategory} newItem={newItem} setNewItem={setNewItem}
+              categories={categories} handleAddOrUpdateItem={handleAddOrUpdateItem}
+              handleImageUpload={handleImageUpload} imagePreview={imagePreview}
+              imagePreview2={imagePreview2} setImagePreview={setImagePreview}
+              setImagePreview2={setImagePreview2}
               auctionStartInput={auctionStartInput} setAuctionStartInput={setAuctionStartInput}
               auctionEndInput={auctionEndInput} setAuctionEndInput={setAuctionEndInput}
             />
