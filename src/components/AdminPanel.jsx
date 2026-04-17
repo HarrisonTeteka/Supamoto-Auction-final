@@ -1,9 +1,6 @@
 import React from 'react';
-import { doc, setDoc } from "firebase/firestore";
-import {
-  MonitorSmartphone, Edit2, Plus, Tag, XCircle,
-  Clock, Trophy, Download, Calendar
-} from 'lucide-react';
+import { doc, setDoc, updateDoc } from "firebase/firestore";
+import { MonitorSmartphone, Edit2, Plus, Tag, XCircle, Clock, Trophy, Download, Calendar, RotateCcw } from 'lucide-react';
 
 export default function AdminPanel({
   items = [],
@@ -57,6 +54,28 @@ export default function AdminPanel({
     }
   };
 
+  // --- Reset All Bids & Purchases ---
+  const resetAuction = async () => {
+    if (!window.confirm('⚠️ RESET AUCTION?\n\nThis will:\n• Clear ALL bids on every item\n• Clear ALL purchases\n• Restore stock quantities\n• Re-open all closed items\n\nThis cannot be undone. Are you sure?')) return;
+    try {
+      const resetPromises = items.map(item =>
+        updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id), {
+          currentBid: 0,
+          topBidder: null,
+          bids: [],
+          purchases: item.type === 'shop' ? [] : null,
+          stock: item.type === 'shop' ? (Number(item.stock) + (item.purchases?.length || 0)) : null,
+          status: 'open'
+        })
+      );
+      await Promise.all(resetPromises);
+      showAlert?.('✅ Auction reset! All bids and purchases cleared.', 'success');
+    } catch (err) {
+      showAlert?.('Failed to reset auction.', 'error');
+      console.error(err);
+    }
+  };
+
   return (
     <>
       {/* --- ANALYTICS KPI ROW --- */}
@@ -78,7 +97,7 @@ export default function AdminPanel({
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 text-center">
           <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Revenue (K)</p>
           <p className="text-3xl font-black text-orange-600">
-            {items.filter(i => i.status === 'closed').reduce((sum, i) => sum + (i.currentBid || 0), 0).toLocaleString()}
+            {items.filter(i => i.status === 'closed').reduce((sum, i) => sum + (Number(i.currentBid) || 0), 0).toLocaleString()}
           </p>
         </div>
       </section>
@@ -131,7 +150,7 @@ export default function AdminPanel({
                   <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center flex-shrink-0 text-sm">📦</div>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-gray-800 text-sm truncate">{item.name}</p>
-                    <p className="text-xs text-gray-400">{item.category} · Current bid: K{(item.currentBid || 0).toLocaleString()}</p>
+                    <p className="text-xs text-gray-400">{item.category} · Current bid: K{(Number(item.currentBid) || 0).toLocaleString()}</p>
                   </div>
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${
                     item.status === 'closed' ? 'bg-gray-100 text-gray-500' : 'bg-green-100 text-green-700'
@@ -184,7 +203,7 @@ export default function AdminPanel({
                       </div>
                     </td>
                     <td className="px-5 py-3 text-gray-600">{item.name}</td>
-                    <td className="px-5 py-3 font-bold" style={{ color: colors.mossGreen }}>K{(item.currentBid || 0).toLocaleString()}</td>
+                    <td className="px-5 py-3 font-bold" style={{ color: colors.mossGreen }}>K{(Number(item.currentBid) || 0).toLocaleString()}</td>
                   </tr>
                 ))
               )}
@@ -211,31 +230,21 @@ export default function AdminPanel({
         <h2 className="text-xl font-bold flex items-center gap-2 mb-1 text-red-600">
           <Clock className="w-5 h-5" /> Auction Schedule
         </h2>
-        <p className="text-sm text-gray-500 mb-5">Set the exact start and end date/time for the auction. All users will see a live countdown.</p>
+        <p className="text-sm text-gray-500 mb-5">Set the exact start and end date/time for the auction.</p>
         <form onSubmit={saveAuctionSchedule} className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-semibold text-gray-600 mb-1 flex items-center gap-1">
               <Calendar className="w-4 h-4" /> Auction Start
             </label>
-            <input
-              type="datetime-local"
-              value={auctionStartInput}
-              onChange={e => setAuctionStartInput(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-red-400 transition-all text-sm"
-              required
-            />
+            <input type="datetime-local" value={auctionStartInput} onChange={e => setAuctionStartInput(e.target.value)}
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-red-400 transition-all text-sm" required />
           </div>
           <div>
             <label className="block text-sm font-semibold text-gray-600 mb-1 flex items-center gap-1">
               <Clock className="w-4 h-4" /> Auction End
             </label>
-            <input
-              type="datetime-local"
-              value={auctionEndInput}
-              onChange={e => setAuctionEndInput(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-red-400 transition-all text-sm"
-              required
-            />
+            <input type="datetime-local" value={auctionEndInput} onChange={e => setAuctionEndInput(e.target.value)}
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-red-400 transition-all text-sm" required />
           </div>
           <div className="md:col-span-2">
             <button type="submit" className="w-full md:w-auto px-8 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2">
@@ -248,6 +257,23 @@ export default function AdminPanel({
             <strong>Current schedule:</strong> {new Date(appSettings.auctionStart).toLocaleString()} → {new Date(appSettings.auctionEnd).toLocaleString()}
           </div>
         )}
+      </section>
+
+      {/* --- RESET AUCTION SECTION --- */}
+      <section className="bg-white rounded-xl shadow-md border-t-4 border-gray-800 p-6 mb-8">
+        <h2 className="text-xl font-bold flex items-center gap-2 mb-1 text-gray-800">
+          <RotateCcw className="w-5 h-5" /> Reset Auction Data
+        </h2>
+        <p className="text-sm text-gray-500 mb-5">
+          Clears all bids, purchases and reopens all items for a fresh auction.{' '}
+          <strong className="text-red-600">This cannot be undone.</strong>
+        </p>
+        <button
+          onClick={resetAuction}
+          className="w-full md:w-auto px-8 py-3 bg-gray-800 text-white rounded-xl font-bold hover:bg-gray-900 active:scale-95 transition-all shadow-lg flex items-center justify-center gap-2"
+        >
+          <RotateCcw className="w-5 h-5" /> Reset All Bids & Purchases
+        </button>
       </section>
 
       {/* --- LOGIN BACKGROUND SECTION --- */}
@@ -278,7 +304,6 @@ export default function AdminPanel({
         <h2 className="text-xl font-bold flex items-center gap-2 mb-6" style={{ color: colors.tangerine }}>
           {editingItemId ? <><Edit2 className="w-5 h-5" /> Edit Item</> : <><Plus className="w-5 h-5" /> Add New Item</>}
         </h2>
-
         <form onSubmit={handleAddOrUpdateItem} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -307,12 +332,10 @@ export default function AdminPanel({
               )}
             </div>
           </div>
-
           <div>
             <label className="block text-sm font-semibold text-gray-600 mb-1">Description</label>
             <textarea value={newItem.desc} onChange={e => setNewItem({...newItem, desc: e.target.value})} placeholder="Item description..." rows={2} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-orange-400 transition-all text-sm resize-none" />
           </div>
-
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-semibold text-gray-600 mb-1">Type</label>
@@ -322,10 +345,10 @@ export default function AdminPanel({
               </select>
             </div>
             <div>
-              <label className="block text-sm font-semibold text-gray-600 mb-1">
-                {newItem.type === 'shop' ? 'Price (K) *' : 'Starting Bid (K) *'}
-              </label>
-              <input type="number" required min="0" value={newItem.type === 'shop' ? (newItem.price || '') : newItem.startPrice} onChange={e => newItem.type === 'shop' ? setNewItem({...newItem, price: e.target.value}) : setNewItem({...newItem, startPrice: e.target.value})} placeholder="0" className="w-full px-4 py-2.5 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-orange-400 transition-all text-sm" />
+              <label className="block text-sm font-semibold text-gray-600 mb-1">{newItem.type === 'shop' ? 'Price (K) *' : 'Starting Bid (K) *'}</label>
+              <input type="number" required min="0" value={newItem.type === 'shop' ? (newItem.price || '') : newItem.startPrice}
+                onChange={e => newItem.type === 'shop' ? setNewItem({...newItem, price: e.target.value}) : setNewItem({...newItem, startPrice: e.target.value})}
+                placeholder="0" className="w-full px-4 py-2.5 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-orange-400 transition-all text-sm" />
             </div>
             {newItem.type === 'shop' && (
               <div>
@@ -334,7 +357,6 @@ export default function AdminPanel({
               </div>
             )}
           </div>
-
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-semibold text-gray-600 mb-1">Primary Image (max 200KB)</label>
@@ -357,7 +379,6 @@ export default function AdminPanel({
               )}
             </div>
           </div>
-
           <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200 cursor-pointer" onClick={() => setNewItem({...newItem, isFaulty: !newItem.isFaulty})}>
             <input type="checkbox" checked={newItem.isFaulty} onChange={() => {}} className="w-4 h-4 cursor-pointer" />
             <label className="text-sm font-medium text-gray-700 cursor-pointer">Mark as Faulty / Needs Repair</label>
@@ -365,7 +386,6 @@ export default function AdminPanel({
           {newItem.isFaulty && (
             <textarea value={newItem.faultDescription} onChange={e => setNewItem({...newItem, faultDescription: e.target.value})} placeholder="Describe the fault or repair needed..." rows={2} className="w-full px-4 py-2.5 border border-orange-300 rounded-xl outline-none focus:ring-2 focus:ring-orange-400 transition-all text-sm resize-none bg-orange-50" />
           )}
-
           <div className="flex gap-3 pt-2">
             <button type="submit" style={{ backgroundColor: colors.tangerine }} className="flex-1 md:flex-none px-8 py-3 text-white font-bold rounded-xl hover:opacity-90 transition-opacity shadow-md flex items-center justify-center gap-2">
               {editingItemId ? <><Edit2 className="w-4 h-4" /> Update Item</> : <><Plus className="w-4 h-4" /> Add Item</>}
