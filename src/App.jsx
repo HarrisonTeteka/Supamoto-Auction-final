@@ -2,7 +2,8 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, setDoc, runTransaction } from 'firebase/firestore';
-import { Flame, User, Trophy, Shield, Lock, Search, XCircle, Tag, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
+import { User, Trophy, Shield, Lock, Search, XCircle, Tag, ChevronLeft, ChevronRight, AlertTriangle, UserPlus } from 'lucide-react';
+import logo from './assets/logo.webp';
 
 import Navbar from './components/Navbar';
 import AlertToast from './components/AlertToast';
@@ -25,7 +26,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'supamoto-auction-2026';
 
-// --- Web Crypto password hashing (non-blocking, replaces bcryptjs) ---
+// --- Web Crypto password hashing (non-blocking) ---
 const hashPassword = async (password) => {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const enc = new TextEncoder();
@@ -34,97 +35,95 @@ const hashPassword = async (password) => {
     { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
     keyMaterial, 256
   );
-  const hashArray = Array.from(new Uint8Array(hashBits));
-  const saltArray = Array.from(salt);
-  return JSON.stringify({ salt: saltArray, hash: hashArray });
+  return JSON.stringify({ salt: Array.from(salt), hash: Array.from(new Uint8Array(hashBits)) });
 };
 
 const verifyPassword = async (password, stored) => {
   try {
     const { salt, hash } = JSON.parse(stored);
     const enc = new TextEncoder();
-    const saltUint8 = new Uint8Array(salt);
     const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
     const hashBits = await crypto.subtle.deriveBits(
-      { name: 'PBKDF2', salt: saltUint8, iterations: 100000, hash: 'SHA-256' },
+      { name: 'PBKDF2', salt: new Uint8Array(salt), iterations: 100000, hash: 'SHA-256' },
       keyMaterial, 256
     );
-    const newHash = Array.from(new Uint8Array(hashBits));
-    return JSON.stringify(newHash) === JSON.stringify(hash);
-  } catch {
-    return false;
-  }
+    return JSON.stringify(Array.from(new Uint8Array(hashBits))) === JSON.stringify(hash);
+  } catch { return false; }
 };
 
-// --- Timer Helper (outside component to prevent re-creation on every render) ---
+// --- Timer helper (outside component) ---
 const calculateTimeLeft = (start, end) => {
   if (!end) return null;
   const now = Date.now();
   if (start && now < start) return 'NOT STARTED';
-  const difference = end - now;
-  if (difference <= 0) return 'AUCTION CLOSED';
-  const hours = Math.floor(difference / (1000 * 60 * 60));
-  const mins = Math.floor((difference / 1000 / 60) % 60);
-  const secs = Math.floor((difference / 1000) % 60);
-  return `${hours.toString().padStart(2, '0')}h ${mins.toString().padStart(2, '0')}m ${secs.toString().padStart(2, '0')}s`;
+  const diff = end - now;
+  if (diff <= 0) return 'AUCTION CLOSED';
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  const s = Math.floor((diff % 60000) / 1000);
+  return `${String(h).padStart(2,'0')}h ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`;
 };
 
 export default function App() {
   const colors = { tangerine: '#F58202', mossGreen: '#336021', auburn: '#9E2A2B', cornsilk: '#F9EDCC' };
 
-  const [user, setUser] = useState(null);
-  const [dbUsers, setDbUsers] = useState([]);
-  const [items, setItems] = useState([]);
-  const [alerts, setAlerts] = useState([]);
-  const [loginForm, setLoginForm] = useState({ name: '', password: '', isAdmin: false });
-  const [bidInputs, setBidInputs] = useState({});
-  const [searchQuery, setSearchQuery] = useState('');
+  const [user, setUser]                     = useState(null);
+  const [dbUsers, setDbUsers]               = useState([]);
+  const [items, setItems]                   = useState([]);
+  const [alerts, setAlerts]                 = useState([]);
+  const [bidInputs, setBidInputs]           = useState({});
+  const [searchQuery, setSearchQuery]       = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  const [expandedImage, setExpandedImage] = useState(null);
-  const [appSettings, setAppSettings] = useState({ loginBg: null });
-  const [bgPreview, setBgPreview] = useState(null);
-  const [categories, setCategories] = useState(['Cookstoves', 'Fuel', 'Solar', 'General']);
+  const [expandedImage, setExpandedImage]   = useState(null);
+  const [appSettings, setAppSettings]       = useState({ loginBg: null });
+  const [bgPreview, setBgPreview]           = useState(null);
+  const [categories, setCategories]         = useState(['Cookstoves', 'Fuel', 'Solar', 'General']);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState('');
-  const [newItem, setNewItem] = useState({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' });
-  const [imagePreview, setImagePreview] = useState(null);
-  const [imagePreview2, setImagePreview2] = useState(null);
-  const [editingItemId, setEditingItemId] = useState(null);
-  const [showTerms, setShowTerms] = useState(false);
-  const [termsAccepted, setTermsAccepted] = useState(false);
-  const [pendingUser, setPendingUser] = useState(null);
-  const [timeLeft, setTimeLeft] = useState('');
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [newCategoryName, setNewCategoryName]   = useState('');
+  const [newItem, setNewItem]               = useState({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' });
+  const [imagePreview, setImagePreview]     = useState(null);
+  const [imagePreview2, setImagePreview2]   = useState(null);
+  const [editingItemId, setEditingItemId]   = useState(null);
+  const [showTerms, setShowTerms]           = useState(false);
+  const [termsAccepted, setTermsAccepted]   = useState(false);
+  const [pendingUser, setPendingUser]       = useState(null);
+  const [timeLeft, setTimeLeft]             = useState('');
   const [auctionStartInput, setAuctionStartInput] = useState('');
-  const [auctionEndInput, setAuctionEndInput] = useState('');
+  const [auctionEndInput, setAuctionEndInput]     = useState('');
 
-  // --- Load on app start ---
+  // Login form state
+  const [loginName, setLoginName]           = useState('');
+  const [loginPass, setLoginPass]           = useState('');
+  const [loginLoading, setLoginLoading]     = useState(false);
+
+  // Register form state
+  const [regName, setRegName]               = useState('');
+  const [regPass, setRegPass]               = useState('');
+  const [regLoading, setRegLoading]         = useState(false);
+
+  // --- App start ---
   useEffect(() => {
     const link = document.createElement('link');
-    link.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap';
+    link.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap';
     link.rel = 'stylesheet';
     document.head.appendChild(link);
+    signInAnonymously(auth).catch(() => {});
 
-    const initAuth = async () => { try { await signInAnonymously(auth); } catch(e){} };
-    initAuth();
-
-    const unsubItems = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'items'), (snap) => {
-      setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt));
-    });
-    const unsubSettings = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'general'), (snap) => {
+    const unsubItems    = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'items'), snap =>
+      setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt)));
+    const unsubSettings = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'general'), snap => {
       if (snap.exists()) setAppSettings(snap.data());
     });
-    const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), (snap) => {
-      setDbUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    const unsubUsers    = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), snap =>
+      setDbUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
 
     return () => { document.head.removeChild(link); unsubItems(); unsubSettings(); unsubUsers(); };
   }, []);
 
-  // --- Pre-fill auction schedule inputs when settings load ---
+  // --- Pre-fill schedule inputs ---
   useEffect(() => {
-    const pad = (n) => String(n).padStart(2, '0');
-    const fmt = (ts) => {
+    const pad = n => String(n).padStart(2, '0');
+    const fmt = ts => {
       if (!ts) return '';
       const d = new Date(ts);
       return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -133,100 +132,90 @@ export default function App() {
     setAuctionEndInput(fmt(appSettings?.auctionEnd));
   }, [appSettings?.auctionStart, appSettings?.auctionEnd]);
 
-  // --- Load after login ---
+  // --- Post-login subscriptions ---
   useEffect(() => {
     if (!user) return;
-
-    const unsubCat = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'categories'), (snap) => {
+    const unsubCat = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'categories'), snap => {
       const cats = snap.docs.map(d => d.data().name);
       if (cats.length > 0) setCategories(cats);
     });
-
-    const unsubNotifs = onSnapshot(
-      collection(db, 'artifacts', appId, 'public', 'data', 'notifications'),
-      (snap) => {
-        const unread = snap.docs.filter(d => {
-          const n = d.data();
-          return n.to === user.name && !n.read;
-        });
-        if (unread.length === 0) return;
-        unread.forEach(d => showAlert(`⚠️ ${d.data().message}`, 'error'));
-        Promise.all(
-          unread.map(d =>
-            updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', d.id), { read: true })
-          )
-        ).catch(console.error);
-      }
-    );
-
+    const unsubNotifs = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'notifications'), snap => {
+      const unread = snap.docs.filter(d => { const n = d.data(); return n.to === user.name && !n.read; });
+      if (unread.length === 0) return;
+      unread.forEach(d => showAlert(`⚠️ ${d.data().message}`, 'error'));
+      Promise.all(unread.map(d => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', d.id), { read: true }))).catch(console.error);
+    });
     return () => { unsubCat(); unsubNotifs(); };
   }, [user]);
 
-  // --- Timer Tick ---
+  // --- Timer ---
   useEffect(() => {
     const tick = () => setTimeLeft(calculateTimeLeft(appSettings?.auctionStart, appSettings?.auctionEnd));
     tick();
-    const timer = setInterval(tick, 1000);
-    return () => clearInterval(timer);
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
   }, [appSettings?.auctionStart, appSettings?.auctionEnd]);
 
-  // --- Auction Closed Check ---
   const isAuctionClosed = () => appSettings?.auctionEnd && Date.now() >= appSettings.auctionEnd;
 
-  // --- Alert Helper ---
   const showAlert = (message, type = 'info') => {
     const id = Date.now();
     setAlerts(prev => [...prev, { id, message, type }]);
     setTimeout(() => setAlerts(prev => prev.filter(a => a.id !== id)), 4000);
   };
 
-  // --- Login ---
+  // --- LOGIN (existing users only) ---
   const handleLogin = async (e) => {
     e.preventDefault();
-    setIsLoggingIn(true);
-    const enteredName = loginForm.name.trim();
-    const enteredPassword = loginForm.password.trim();
-
-    if (!enteredName || !enteredPassword) {
-      setIsLoggingIn(false);
-      return showAlert('Please enter both name and password.', 'error');
+    const name = loginName.trim();
+    const pass = loginPass.trim();
+    if (!name || !pass) return showAlert('Please enter your name and password.', 'error');
+    setLoginLoading(true);
+    const existing = dbUsers.find(u => u.name.toLowerCase() === name.toLowerCase());
+    if (!existing) {
+      showAlert('Account not found. Please create one below.', 'error');
+      setLoginLoading(false);
+      return;
     }
-
-    const existingUser = dbUsers.find(u => u.name.toLowerCase() === enteredName.toLowerCase());
-
-    if (existingUser) {
-      const passwordMatch = await verifyPassword(enteredPassword, existingUser.password);
-      if (passwordMatch) {
-        setUser({ name: existingUser.name, role: existingUser.role });
-        showAlert(`Welcome ${existingUser.role === 'admin' ? 'Master' : 'back'}!`, 'success');
-      } else {
-        showAlert('Incorrect password.', 'error');
-      }
+    const match = await verifyPassword(pass, existing.password);
+    if (match) {
+      setUser({ name: existing.name, role: existing.role });
+      showAlert(`Welcome back, ${existing.name}! 👋`, 'success');
     } else {
-      if (loginForm.isAdmin) {
-        showAlert('Admin account not found.', 'error');
-      } else {
-        setPendingUser({ name: enteredName, password: enteredPassword });
-        setShowTerms(true);
-      }
+      showAlert('Incorrect password. Please try again.', 'error');
     }
-    setIsLoggingIn(false);
+    setLoginLoading(false);
   };
 
-  // --- Register ---
+  // --- REGISTER (new users — show T&C first) ---
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    const name = regName.trim();
+    const pass = regPass.trim();
+    if (!name || !pass) return showAlert('Please fill in all fields.', 'error');
+    if (pass.length < 4) return showAlert('Password must be at least 4 characters.', 'error');
+    const existing = dbUsers.find(u => u.name.toLowerCase() === name.toLowerCase());
+    if (existing) return showAlert('That name is already taken. Please choose another.', 'error');
+    setPendingUser({ name, password: pass });
+    setShowTerms(true);
+  };
+
   const completeRegistration = async () => {
     if (!termsAccepted || !pendingUser) return;
+    setRegLoading(true);
     try {
       const hashedPassword = await hashPassword(pendingUser.password);
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'users'), {
         name: pendingUser.name, password: hashedPassword, role: 'user', createdAt: Date.now()
       });
       setUser({ name: pendingUser.name, role: 'user' });
-      showAlert('Account created.', 'success');
+      showAlert(`Account created! Welcome, ${pendingUser.name}! 🎉`, 'success');
       setShowTerms(false); setTermsAccepted(false); setPendingUser(null);
-    } catch (err) {
-      showAlert('Error creating account.', 'error');
+      setRegName(''); setRegPass('');
+    } catch {
+      showAlert('Error creating account. Please try again.', 'error');
     }
+    setRegLoading(false);
   };
 
   // --- Place Bid ---
@@ -237,59 +226,52 @@ export default function App() {
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id);
     try {
       await runTransaction(db, async (transaction) => {
-        const itemSnap = await transaction.get(itemRef);
-        if (!itemSnap.exists()) throw new Error('Item no longer exists.');
-        const liveItem = itemSnap.data();
-        if (liveItem.status === 'closed') throw new Error('This auction has already closed.');
-        const minBid = liveItem.currentBid === 0 ? liveItem.startPrice : liveItem.currentBid + 1;
+        const snap = await transaction.get(itemRef);
+        if (!snap.exists()) throw new Error('Item no longer exists.');
+        const live = snap.data();
+        if (live.status === 'closed') throw new Error('This auction has already closed.');
+        const minBid = live.currentBid === 0 ? live.startPrice : live.currentBid + 1;
         if (amt < minBid) throw new Error(`Bid must be at least K${minBid}.`);
-        if (liveItem.topBidder === user.name && liveItem.currentBid === amt) throw new Error('You are already the top bidder!');
-        const previousTopBidder = liveItem.topBidder;
-        if (previousTopBidder && previousTopBidder !== user.name) {
+        if (live.topBidder === user.name && live.currentBid === amt) throw new Error('You are already the top bidder!');
+        if (live.topBidder && live.topBidder !== user.name) {
           const notifRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'notifications'));
           transaction.set(notifRef, {
-            to: previousTopBidder,
-            message: `You've been outbid on "${liveItem.name}"! New bid: K${amt.toLocaleString()}. Bid higher to stay in the lead.`,
-            itemId: item.id, itemName: liveItem.name, newBid: amt, read: false, timestamp: Date.now()
+            to: live.topBidder, message: `You've been outbid on "${live.name}"! New bid: K${amt.toLocaleString()}. Bid higher to stay in the lead.`,
+            itemId: item.id, itemName: live.name, newBid: amt, read: false, timestamp: Date.now()
           });
         }
         transaction.update(itemRef, {
           currentBid: amt, topBidder: user.name,
-          bids: [...(liveItem.bids || []), { bidder: user.name, amount: amt, timestamp: Date.now() }]
+          bids: [...(live.bids || []), { bidder: user.name, amount: amt, timestamp: Date.now() }]
         });
       });
       setBidInputs(prev => ({ ...prev, [item.id]: '' }));
-      showAlert(`✅ Bid of K${amt.toLocaleString()} placed successfully!`, 'success');
-    } catch (err) {
-      showAlert(err.message || 'Failed to place bid. Try again.', 'error');
-    }
+      showAlert(`✅ Bid of K${amt.toLocaleString()} placed!`, 'success');
+    } catch (err) { showAlert(err.message || 'Failed to place bid.', 'error'); }
   };
 
   // --- Buy Shop Item ---
   const buyItem = async (item) => {
     if (!user) return;
-    if (user?.role !== 'admin' && isAuctionClosed()) return showAlert('The auction has closed. Access is locked.', 'error');
+    if (user?.role !== 'admin' && isAuctionClosed()) return showAlert('The auction has closed.', 'error');
     const alreadyBought = (item.purchases || []).some(p => p.buyer === user.name);
     if (alreadyBought) return showAlert('You have already reserved this item.', 'error');
     if (item.stock <= 0) return showAlert('Sorry, this item is out of stock.', 'error');
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id);
     try {
       await runTransaction(db, async (transaction) => {
-        const itemSnap = await transaction.get(itemRef);
-        if (!itemSnap.exists()) throw new Error('Item no longer exists.');
-        const liveItem = itemSnap.data();
-        if (liveItem.stock <= 0) throw new Error('Out of stock.');
-        const alreadyIn = (liveItem.purchases || []).some(p => p.buyer === user.name);
-        if (alreadyIn) throw new Error('You have already reserved this item.');
+        const snap = await transaction.get(itemRef);
+        if (!snap.exists()) throw new Error('Item no longer exists.');
+        const live = snap.data();
+        if (live.stock <= 0) throw new Error('Out of stock.');
+        if ((live.purchases || []).some(p => p.buyer === user.name)) throw new Error('Already reserved.');
         transaction.update(itemRef, {
-          stock: liveItem.stock - 1,
-          purchases: [...(liveItem.purchases || []), { buyer: user.name, timestamp: Date.now() }]
+          stock: live.stock - 1,
+          purchases: [...(live.purchases || []), { buyer: user.name, timestamp: Date.now() }]
         });
       });
       showAlert(`✅ "${item.name}" reserved for K${item.price.toLocaleString()}!`, 'success');
-    } catch (err) {
-      showAlert(err.message || 'Purchase failed. Try again.', 'error');
-    }
+    } catch (err) { showAlert(err.message || 'Purchase failed.', 'error'); }
   };
 
   // --- Add / Edit Item ---
@@ -303,8 +285,7 @@ export default function App() {
       } else {
         const isShop = newItem.type === 'shop';
         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'items'), {
-          ...data,
-          type: isShop ? 'shop' : 'auction',
+          ...data, type: isShop ? 'shop' : 'auction',
           price: isShop ? parseFloat(newItem.price) : null,
           stock: isShop ? parseInt(newItem.stock) : null,
           purchases: isShop ? [] : null,
@@ -314,12 +295,9 @@ export default function App() {
       }
       setNewItem({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' });
       setImagePreview(null); setImagePreview2(null); setEditingItemId(null);
-    } catch (err) {
-      showAlert('Failed to save item.', 'error');
-    }
+    } catch { showAlert('Failed to save item.', 'error'); }
   };
 
-  // --- Image Uploads ---
   const handleImageUpload = (e, field) => {
     const file = e.target.files[0];
     if (!file || file.size > 200 * 1024) return showAlert('Image too large (max 200KB).', 'error');
@@ -346,7 +324,6 @@ export default function App() {
     showAlert('Background updated!', 'success'); setBgPreview(null);
   };
 
-  // --- Categories ---
   const handleAddCategory = async (e) => {
     e.preventDefault();
     const trimmed = newCategoryName.trim();
@@ -356,105 +333,204 @@ export default function App() {
     showAlert('Category created!', 'success');
   };
 
-  // --- Delete Item ---
   const deleteItem = async (id) => {
     const item = items.find(i => i.id === id);
-    if (window.confirm(`Are you sure you want to permanently delete "${item?.name || 'this item'}"? This cannot be undone.`)) {
+    if (window.confirm(`Delete "${item?.name || 'this item'}"? This cannot be undone.`)) {
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', id));
       showAlert('Item deleted.', 'info');
     }
   };
 
-  // --- Close Auction ---
   const closeAuction = async (item) => {
-    const topBidder = item.topBidder ? ` Winner: ${item.topBidder} (K${item.currentBid}).` : ' No bids placed yet.';
-    if (window.confirm(`Close auction for "${item.name}"?${topBidder} This cannot be undone.`)) {
+    const msg = item.topBidder ? ` Winner: ${item.topBidder} (K${item.currentBid}).` : ' No bids placed.';
+    if (window.confirm(`Close auction for "${item.name}"?${msg}`)) {
       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id), { status: 'closed' });
-      showAlert('Auction closed successfully.', 'info');
+      showAlert('Auction closed.', 'info');
     }
   };
 
-  // --- Carousel Scroll ---
   const scrollCarousel = (direction, categoryName) => {
-    const container = document.getElementById(`carousel-${categoryName.replace(/\s+/g, '-')}`);
-    if (container) container.scrollBy({ left: direction === 'left' ? -300 : 300, behavior: 'smooth' });
+    const el = document.getElementById(`carousel-${categoryName.replace(/\s+/g, '-')}`);
+    if (el) el.scrollBy({ left: direction === 'left' ? -300 : 300, behavior: 'smooth' });
   };
 
-  // ==========================================
-  // LOGIN VIEW
-  // ==========================================
+  // =============================================
+  // =============================================
+  // LOGIN PAGE
+  // =============================================
   if (!user) {
-    const loginBgStyle = appSettings?.loginBg
-      ? { backgroundImage: `linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.7)), url(${appSettings.loginBg})`, backgroundSize: 'cover', backgroundPosition: 'center' }
-      : { backgroundColor: colors.cornsilk };
+    const bgStyle = appSettings?.loginBg
+      ? { backgroundImage: `linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0.65)), url(${appSettings.loginBg})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+      : { background: `linear-gradient(135deg, #336021 0%, #1a3a10 50%, #9E2A2B 100%)` };
 
     return (
-      <div style={{ fontFamily: "'Poppins', sans-serif", ...loginBgStyle }} className="min-h-screen flex items-center justify-center p-6 text-[#336021]">
+      <div style={{ fontFamily: "'Poppins', sans-serif", ...bgStyle }} className="min-h-screen flex items-center justify-center p-4">
         <AlertToast alerts={alerts} colors={colors} />
 
+        {/* Terms Modal */}
         {showTerms && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
             <div className="bg-white rounded-2xl p-6 max-w-md w-full border-t-8 shadow-2xl" style={{ borderColor: colors.mossGreen }}>
-              <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><AlertTriangle className="text-orange-500" /> Terms of Auction</h2>
+              <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-800">
+                <AlertTriangle className="text-orange-500 w-6 h-6" /> Auction Terms
+              </h2>
               <div className="bg-orange-50 rounded-lg p-4 border border-orange-100 mb-5">
-                <p className="text-sm font-medium leading-relaxed" style={{ color: colors.mossGreen }}>
+                <p className="text-sm font-medium leading-relaxed text-gray-700">
                   These terms have been established by management. By proceeding, you acknowledge that all actions and decisions are your responsibility, including any resulting payroll deductions and penalties.
                 </p>
               </div>
               <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer mb-6 border border-gray-200 hover:bg-gray-100 transition-colors">
-                <input type="checkbox" checked={termsAccepted} onChange={e => setTermsAccepted(e.target.checked)} className="mt-0.5 w-5 h-5 rounded cursor-pointer" />
-                <span className="text-sm font-semibold text-gray-700">Please check the box to confirm your acknowledgment.</span>
+                <input type="checkbox" checked={termsAccepted} onChange={e => setTermsAccepted(e.target.checked)} className="mt-0.5 w-5 h-5 cursor-pointer accent-green-700" />
+                <span className="text-sm font-semibold text-gray-700">I have read and agree to the auction terms.</span>
               </label>
               <div className="flex gap-3">
-                <button onClick={() => { setShowTerms(false); setPendingUser(null); }} className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300 transition-colors">Cancel</button>
-                <button onClick={completeRegistration} disabled={!termsAccepted} style={{ backgroundColor: colors.tangerine }} className={`flex-1 py-3 text-white rounded-xl font-bold transition-all ${!termsAccepted ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}>Confirm & Join</button>
+                <button onClick={() => { setShowTerms(false); setPendingUser(null); setTermsAccepted(false); }} className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300 transition-colors">Cancel</button>
+                <button onClick={completeRegistration} disabled={!termsAccepted || regLoading} style={{ backgroundColor: colors.mossGreen }} className={`flex-1 py-3 text-white rounded-xl font-bold transition-all ${(!termsAccepted || regLoading) ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}>
+                  {regLoading ? 'Creating…' : 'Confirm & Join'}
+                </button>
               </div>
             </div>
           </div>
         )}
 
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 border-t-8" style={{ borderColor: colors.tangerine }}>
-          <div className="flex justify-center mb-6">
-            <div style={{ backgroundColor: colors.mossGreen }} className="p-4 rounded-full shadow-md">
-              <Flame className="w-12 h-12 text-white fill-white" />
+        <div className="w-full max-w-sm">
+
+          {/* Header */}
+          <div className="text-center mb-8">
+            <div className="flex justify-center mb-4">
+              <div className="bg-white/15 backdrop-blur-sm p-5 rounded-full border-4 border-white/30 shadow-2xl">
+  <img src={logo} alt="SupaMoto Logo" className="w-32 h-32 object-contain drop-shadow-2xl" />
+</div>
             </div>
+            <h1 className="text-3xl font-extrabold text-white tracking-tight drop-shadow-lg">SupaMoto Auction 2026</h1>
+            <p className="text-white/60 mt-2 text-xs font-medium tracking-widest uppercase">Chinja Malasha  Chinja Umoyo</p>
           </div>
-          <h1 className="text-2xl font-bold text-center mb-2" style={{ color: colors.mossGreen }}>SupaMoto Auction 2026</h1>
-          <p className="text-center text-gray-500 mb-8 text-sm">Chinja Malasha. Chinja Umoyo.</p>
-          <form onSubmit={handleLogin} className="space-y-5">
-            <div>
-              <label className="block text-sm font-medium mb-1 text-gray-700">Display Name</label>
-              <div className="relative">
-                <User className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input type="text" required value={loginForm.name} onChange={e => setLoginForm({...loginForm, name: e.target.value})} placeholder="Enter your name" className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:border-transparent transition-all" />
-              </div>
+
+          {/* Card with Tabs */}
+          <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
+
+            {/* Tab switcher */}
+            <div className="flex border-b border-gray-100">
+              <button
+                onClick={() => { setLoginName(''); setLoginPass(''); setRegName(''); setRegPass(''); }}
+                className={`flex-1 py-4 text-sm font-bold transition-all flex items-center justify-center gap-2 ${!showTerms && regName === '' && regPass === '' && loginName === '' && loginPass === '' || true ? '' : ''}`}
+                id="tab-login"
+                data-active="true"
+                style={{ color: colors.mossGreen, borderBottom: `3px solid ${colors.mossGreen}` }}
+                onClick={(e) => {
+                  document.getElementById('panel-login').style.display = 'block';
+                  document.getElementById('panel-register').style.display = 'none';
+                  document.getElementById('tab-login').style.borderBottom = `3px solid ${colors.mossGreen}`;
+                  document.getElementById('tab-login').style.color = colors.mossGreen;
+                  document.getElementById('tab-login').style.background = 'white';
+                  document.getElementById('tab-register').style.borderBottom = '3px solid transparent';
+                  document.getElementById('tab-register').style.color = '#9ca3af';
+                  document.getElementById('tab-register').style.background = '#f9fafb';
+                }}
+              >
+                <User className="w-4 h-4" /> Login
+              </button>
+              <button
+                id="tab-register"
+                className="flex-1 py-4 text-sm font-bold transition-all flex items-center justify-center gap-2"
+                style={{ color: '#9ca3af', borderBottom: '3px solid transparent', background: '#f9fafb' }}
+                onClick={() => {
+                  document.getElementById('panel-login').style.display = 'none';
+                  document.getElementById('panel-register').style.display = 'block';
+                  document.getElementById('tab-register').style.borderBottom = `3px solid ${colors.tangerine}`;
+                  document.getElementById('tab-register').style.color = colors.tangerine;
+                  document.getElementById('tab-register').style.background = 'white';
+                  document.getElementById('tab-login').style.borderBottom = '3px solid transparent';
+                  document.getElementById('tab-login').style.color = '#9ca3af';
+                  document.getElementById('tab-login').style.background = '#f9fafb';
+                }}
+              >
+                <UserPlus className="w-4 h-4" /> Create Account
+              </button>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1 text-gray-700">Password</label>
-              <div className="relative">
-                <Lock className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input type="password" required value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} placeholder={loginForm.isAdmin ? 'Enter admin password' : 'Create or enter password'} className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:border-transparent transition-all" />
-              </div>
-              <p className="text-xs text-gray-400 mt-1 pl-1">{!loginForm.isAdmin && 'If new, this sets your account password.'}</p>
+
+            {/* Login Panel */}
+            <div id="panel-login" className="p-8">
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-600 mb-1">Full Name</label>
+                  <div className="relative">
+                    <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input type="text" required value={loginName} onChange={e => setLoginName(e.target.value)}
+                      placeholder="Enter your full name"
+                      className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-600 transition-all" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-600 mb-1">Password</label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input type="password" required value={loginPass} onChange={e => setLoginPass(e.target.value)}
+                      placeholder="Enter your password"
+                      className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-600 transition-all" />
+                  </div>
+                </div>
+                <button type="submit" disabled={loginLoading}
+                  style={{ backgroundColor: colors.mossGreen }}
+                  className="w-full py-3 text-white font-bold rounded-xl shadow-md hover:opacity-90 transition-opacity disabled:opacity-60 mt-2">
+                  {loginLoading ? 'Logging in…' : 'Login'}
+                </button>
+              </form>
+              <p className="text-center text-xs text-gray-400 mt-4">
+                New here?{' '}
+                <button className="font-semibold hover:underline" style={{ color: colors.tangerine }}
+                  onClick={() => {
+                    document.getElementById('tab-register').click();
+                  }}>Create an account</button>
+              </p>
             </div>
-            <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl cursor-pointer border border-gray-200 hover:bg-gray-100 transition-colors" onClick={() => setLoginForm({...loginForm, isAdmin: !loginForm.isAdmin})}>
-              <input type="checkbox" checked={loginForm.isAdmin} onChange={() => {}} className="w-4 h-4 rounded cursor-pointer" />
-              <label className="text-sm font-medium flex items-center gap-2 text-gray-700 cursor-pointer">
-                <Shield className="w-4 h-4 text-gray-500" /> I am a Bidder Master (Admin)
-              </label>
+
+            {/* Register Panel */}
+            <div id="panel-register" className="p-8" style={{ display: 'none' }}>
+              <form onSubmit={handleRegister} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-600 mb-1">Full Name</label>
+                  <div className="relative">
+                    <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input type="text" required value={regName} onChange={e => setRegName(e.target.value)}
+                      placeholder="Enter your full name"
+                      className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-400 transition-all" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-600 mb-1">Create Password</label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input type="password" required value={regPass} onChange={e => setRegPass(e.target.value)}
+                      placeholder="Choose a password (min 4 chars)"
+                      className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-400 transition-all" />
+                  </div>
+                </div>
+                <button type="submit" disabled={regLoading}
+                  style={{ backgroundColor: colors.tangerine }}
+                  className="w-full py-3 text-white font-bold rounded-xl shadow-md hover:opacity-90 transition-opacity disabled:opacity-60 mt-2">
+                  {regLoading ? 'Creating…' : 'Sign Up'}
+                </button>
+              </form>
+              <p className="text-center text-xs text-gray-400 mt-4">
+                Already have an account?{' '}
+                <button className="font-semibold hover:underline" style={{ color: colors.mossGreen }}
+                  onClick={() => {
+                    document.getElementById('tab-login').click();
+                  }}>Login here</button>
+              </p>
             </div>
-            <button type="submit" style={{ backgroundColor: colors.tangerine }} className="w-full text-white font-bold py-3 rounded-xl shadow-md hover:opacity-90 transition-opacity mt-4" disabled={isLoggingIn}>
-              {isLoggingIn ? 'Logging in…' : 'Login'}
-            </button>
-          </form>
+
+          </div>
+
+          <p className="text-center text-white/30 text-xs mt-6">© 2026 SupaMoto Zambia · Staff Auction System</p>
         </div>
       </div>
     );
   }
 
-  // ==========================================
-  // AUCTION CLOSED LOCKOUT (non-admin users)
-  // ==========================================
+  // AUCTION CLOSED LOCKOUT
+  // =============================================
   if (user?.role !== 'admin' && isAuctionClosed()) {
     return (
       <div style={{ fontFamily: "'Poppins', sans-serif", backgroundColor: colors.cornsilk }} className="min-h-screen flex items-center justify-center p-6">
@@ -468,20 +544,18 @@ export default function App() {
           <h1 className="text-2xl font-bold mb-3" style={{ color: colors.auburn }}>Auction Closed</h1>
           <p className="text-gray-600 mb-6">This auction has ended. Bidder access is now locked. Please contact the admin if you need help.</p>
           <button
-            onClick={() => { setUser(null); setLoginForm({ name: '', password: '', isAdmin: false }); }}
+            onClick={() => { setUser(null); setLoginName(''); setLoginPass(''); }}
             style={{ backgroundColor: colors.mossGreen }}
             className="w-full text-white font-bold py-3 rounded-xl shadow-md hover:opacity-90 transition-opacity"
-          >
-            Back to Login
-          </button>
+          >Back to Login</button>
         </div>
       </div>
     );
   }
 
-  // ==========================================
-  // MAIN APP VIEW
-  // ==========================================
+  // =============================================
+  // MAIN APP
+  // =============================================
   const filteredItems = items.filter(i =>
     (i.name.toLowerCase().includes(searchQuery.toLowerCase()) || (i.desc && i.desc.toLowerCase().includes(searchQuery.toLowerCase()))) &&
     (selectedCategory === 'All' || i.category === selectedCategory)
@@ -495,20 +569,18 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: "'Poppins', sans-serif", backgroundColor: colors.cornsilk }} className="min-h-screen text-[#336021] pb-12 overflow-x-hidden">
-      <style>{`.hide-scroll::-webkit-scrollbar { display: none; } .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }`}</style>
+      <style>{`.hide-scroll::-webkit-scrollbar{display:none}.hide-scroll{-ms-overflow-style:none;scrollbar-width:none}`}</style>
 
-      <Navbar user={user} colors={colors} handleLogout={() => { setUser(null); setLoginForm({ name: '', password: '', isAdmin: false }); }} />
+      <Navbar user={user} colors={colors} handleLogout={() => { setUser(null); setLoginName(''); setLoginPass(''); }} />
       <AlertToast alerts={alerts} colors={colors} />
 
       <main className="max-w-6xl mx-auto px-6 mt-8">
 
-        {/* ADMIN PANEL */}
         {user.role === 'admin' && (
           <Suspense fallback={<div className="p-8 text-center text-gray-500 font-bold animate-pulse">Loading Admin Tools...</div>}>
             <AdminPanel
-              items={items} dbUsers={dbUsers}
-              db={db} appId={appId} doc={doc} setDoc={setDoc} showAlert={showAlert}
-              colors={colors} appSettings={appSettings} bgPreview={bgPreview}
+              items={items} dbUsers={dbUsers} db={db} appId={appId} doc={doc} setDoc={setDoc}
+              showAlert={showAlert} colors={colors} appSettings={appSettings} bgPreview={bgPreview}
               handleBgUpload={handleBgUpload} saveBgImage={saveBgImage}
               editingItemId={editingItemId} setEditingItemId={setEditingItemId}
               showCategoryForm={showCategoryForm} setShowCategoryForm={setShowCategoryForm}
@@ -516,61 +588,54 @@ export default function App() {
               handleAddCategory={handleAddCategory} newItem={newItem} setNewItem={setNewItem}
               categories={categories} handleAddOrUpdateItem={handleAddOrUpdateItem}
               handleImageUpload={handleImageUpload} imagePreview={imagePreview}
-              imagePreview2={imagePreview2} setImagePreview={setImagePreview}
-              setImagePreview2={setImagePreview2}
+              imagePreview2={imagePreview2} setImagePreview={setImagePreview} setImagePreview2={setImagePreview2}
               auctionStartInput={auctionStartInput} setAuctionStartInput={setAuctionStartInput}
               auctionEndInput={auctionEndInput} setAuctionEndInput={setAuctionEndInput}
             />
           </Suspense>
         )}
 
-        {/* WELCOME BANNER */}
         {user.role === 'user' && (
           <div className="bg-white rounded-xl shadow-sm p-6 mb-8 border border-gray-200 flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div style={{ backgroundColor: colors.mossGreen }} className="p-3 rounded-full text-white"><Trophy className="w-8 h-8" /></div>
               <div>
-                <h2 className="text-xl font-bold" style={{ color: colors.mossGreen }}>Welcome to the Auction, {user.name}!</h2>
+                <h2 className="text-xl font-bold" style={{ color: colors.mossGreen }}>Welcome, {user.name}! 👋</h2>
                 <p className="text-gray-600 text-sm">Place your highest bids before time runs out.</p>
               </div>
             </div>
             <div className="bg-orange-50 border-2 border-orange-200 px-6 py-3 rounded-2xl text-center min-w-[160px]">
               <p className="text-xs font-bold uppercase tracking-wider text-orange-600">Time Remaining</p>
-              <p className="text-2xl font-mono font-black text-orange-700">{timeLeft || '00h 00m 00s'}</p>
+              <p className="text-2xl font-mono font-black text-orange-700">{timeLeft || '—'}</p>
             </div>
           </div>
         )}
 
-        {/* ITEMS BOUGHT */}
         {user.role === 'user' && <ItemsBought items={items} user={user} colors={colors} />}
 
-        {/* SEARCH & FILTER */}
         <div className="flex flex-col md:flex-row gap-4 mb-8 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
           <div className="relative flex-grow">
             <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input type="text" placeholder="Search auction items..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-orange-400 transition-colors" />
+            <input type="text" placeholder="Search items…" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-orange-400 transition-colors" />
           </div>
-          <div className="w-full md:w-64">
-            <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-orange-400 transition-colors bg-white font-medium text-gray-700">
-              <option value="All">All Categories</option>
-              {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-            </select>
-          </div>
+          <select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)} className="w-full md:w-64 px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-orange-400 bg-white font-medium text-gray-700">
+            <option value="All">All Categories</option>
+            {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+          </select>
         </div>
 
-        {/* CAROUSELS */}
         {Object.keys(groupedItems).length > 0 ? (
           <div className="space-y-10">
             {Object.entries(groupedItems).map(([category, catItems]) => (
-              <div key={category} className="flex flex-col">
+              <div key={category}>
                 <div className="flex justify-between items-end mb-4 px-1">
                   <h3 className="text-2xl font-bold flex items-center gap-2" style={{ color: colors.mossGreen }}>
                     <Tag className="w-6 h-6" style={{ color: colors.tangerine }} /> {category}
                     <span className="text-sm font-normal text-gray-500 ml-2">({catItems.length})</span>
                   </h3>
                   <div className="hidden md:flex gap-2">
-                    <button onClick={() => scrollCarousel('left', category)} className="p-1.5 rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors shadow-sm"><ChevronLeft className="w-5 h-5" /></button>
-                    <button onClick={() => scrollCarousel('right', category)} className="p-1.5 rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors shadow-sm"><ChevronRight className="w-5 h-5" /></button>
+                    <button onClick={() => scrollCarousel('left', category)} className="p-1.5 rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 shadow-sm"><ChevronLeft className="w-5 h-5" /></button>
+                    <button onClick={() => scrollCarousel('right', category)} className="p-1.5 rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 shadow-sm"><ChevronRight className="w-5 h-5" /></button>
                   </div>
                 </div>
                 <div id={`carousel-${category.replace(/\s+/g, '-')}`} className="flex overflow-x-auto snap-x snap-mandatory gap-6 pb-6 pt-2 hide-scroll px-1">
@@ -595,18 +660,17 @@ export default function App() {
           <div className="text-center text-gray-500 py-16 bg-white rounded-xl shadow-sm border border-gray-200">
             <Flame className="w-16 h-16 mx-auto mb-4 opacity-20" />
             <p className="text-xl font-medium" style={{ color: colors.mossGreen }}>
-              {items.length === 0 ? 'No items on the auction block yet.' : 'No items match your search or filter.'}
+              {items.length === 0 ? 'No items on the auction block yet.' : 'No items match your search.'}
             </p>
           </div>
         )}
       </main>
 
-      {/* FULLSCREEN IMAGE MODAL */}
       {expandedImage && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm" onClick={() => setExpandedImage(null)}>
           <div className="relative max-w-5xl max-h-full flex flex-col items-center">
-            <button onClick={() => setExpandedImage(null)} className="absolute -top-12 right-0 text-white hover:text-orange-400 transition-colors"><XCircle className="w-10 h-10" /></button>
-            <img src={expandedImage} alt="Expanded view" className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl border-4 border-white/10" onClick={e => e.stopPropagation()} />
+            <button onClick={() => setExpandedImage(null)} className="absolute -top-12 right-0 text-white hover:text-orange-400"><XCircle className="w-10 h-10" /></button>
+            <img src={expandedImage} alt="Expanded" className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl border-4 border-white/10" onClick={e => e.stopPropagation()} />
           </div>
         </div>
       )}

@@ -1,12 +1,13 @@
 import React from 'react';
-import { Flame, Shield, User, LogOut } from 'lucide-react';
+import { Shield, User, LogOut } from 'lucide-react';
+import logo from '../assets/logo.webp';
 
 export default function Navbar({ user, colors, handleLogout }) {
   return (
     <header style={{ backgroundColor: colors.tangerine }} className="text-white shadow-lg sticky top-0 z-20">
       <div className="max-w-6xl mx-auto px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
         <div className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-          <Flame className="w-8 h-8 fill-white" />
+          <img src={logo} alt="SupaMoto Logo" className="w-30 h-15 object-contain" />
           <span style={{ fontWeight: 700 }}>SupaMoto Auction 2026</span>
         </div>
         <div className="flex items-center gap-4">
@@ -17,7 +18,7 @@ export default function Navbar({ user, colors, handleLogout }) {
               {user.role === 'admin' ? 'MASTER' : 'BIDDER'}
             </span>
           </div>
-          <button onClick={handleLogout} className="p-2 hover:bg-white/20 rounded-full transition-colors group relative" title="Logout">
+          <button onClick={handleLogout} className="p-2 hover:bg-white/20 rounded-full transition-colors" title="Logout">
             <LogOut className="w-5 h-5 text-white" />
           </button>
         </div>
