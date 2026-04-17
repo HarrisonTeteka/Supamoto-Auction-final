@@ -556,10 +556,14 @@ export default function App() {
   // =============================================
   // MAIN APP
   // =============================================
-  const filteredItems = items.filter(i =>
-    (i.name.toLowerCase().includes(searchQuery.toLowerCase()) || (i.desc && i.desc.toLowerCase().includes(searchQuery.toLowerCase()))) &&
-    (selectedCategory === 'All' || i.category === selectedCategory)
-  );
+  const filteredItems = items.filter(i => {
+    const name = (i.name || '').toLowerCase();
+    const desc = (i.desc || '').toLowerCase();
+    const query = searchQuery.toLowerCase();
+    const matchesSearch = name.includes(query) || desc.includes(query);
+    const matchesCategory = selectedCategory === 'All' || i.category === selectedCategory;
+    return matchesSearch && matchesCategory;
+  });
   const groupedItems = filteredItems.reduce((acc, item) => {
     const cat = item.category || 'Uncategorized';
     if (!acc[cat]) acc[cat] = [];
