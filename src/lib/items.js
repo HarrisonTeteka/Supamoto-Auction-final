@@ -283,25 +283,48 @@ export const saveLoginBg = async (url) => {
 }
 
 export const resetAuctionData = async () => {
-  const { data: items, error: fetchErr } = await supabase
-    .from('items').select('id, type, stock, purchases(id)')
-  if (fetchErr) throw fetchErr
+  const { data: items, error: itemsErr } = await supabase
+    .from('items')
+    .select('id, type, stock')
+  if (itemsErr) throw itemsErr
+
+  const { data: purchases, error: purchasesErr } = await supabase
+    .from('purchases')
+    .select('id, item_id')
+  if (purchasesErr) throw purchasesErr
+
+  const purchaseCountByItem = {}
+  for (const p of purchases || []) {
+    purchaseCountByItem[p.item_id] = (purchaseCountByItem[p.item_id] || 0) + 1
+  }
 
   const nullId = '00000000-0000-0000-0000-000000000000'
-  await supabase.from('bids').delete().neq('id', nullId)
-  await supabase.from('purchases').delete().neq('id', nullId)
-  await supabase.from('notifications').delete().neq('id', nullId)
+  const { error: bidsDeleteErr } = await supabase.from('bids').delete().neq('id', nullId)
+  if (bidsDeleteErr) throw bidsDeleteErr
 
-  for (const it of items) {
+  const { error: purchasesDeleteErr } = await supabase.from('purchases').delete().neq('id', nullId)
+  if (purchasesDeleteErr) throw purchasesDeleteErr
+
+  const { error: notificationsDeleteErr } = await supabase.from('notifications').delete().neq('id', nullId)
+  if (notificationsDeleteErr) throw notificationsDeleteErr
+
+  for (const it of items || []) {
     const patch = {
       current_bid: 0,
       top_bidder_id: null,
       top_bidder_name: null,
       status: 'open',
     }
+
     if (it.type === 'shop') {
-      patch.stock = (it.stock || 0) + (it.purchases?.length || 0)
+      const soldCount = purchaseCountByItem[it.id] || 0
+      patch.stock = (Number(it.stock) || 0) + soldCount
     }
-    await supabase.from('items').update(patch).eq('id', it.id)
+
+    const { error: updateErr } = await supabase
+      .from('items')
+      .update(patch)
+      .eq('id', it.id)
+    if (updateErr) throw updateErr
   }
 }

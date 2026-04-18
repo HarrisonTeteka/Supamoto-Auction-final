@@ -149,6 +149,7 @@ export default function App() {
       try {
         const profile = await getCurrentUser();
         if (!mounted) return;
+        currentUserId = profile?.id ?? null;
         setUser(profile);
         if (profile) {
           refreshItems();
@@ -161,17 +162,24 @@ export default function App() {
         if (mounted) setAuthLoading(false);
       }
     };
-    initAuth();
+    // Hard timeout — if auth takes >6s, stop spinner regardless
+    const authTimeout = setTimeout(() => { if (mounted) setAuthLoading(false); }, 6000);
+    initAuth().finally(() => clearTimeout(authTimeout));
 
     // Handles sign-in / sign-out AFTER mount. Skips INITIAL_SESSION internally
     // so it doesn't race initAuth.
+    // Guard: only re-run setup if auth state actually changes (prevents loop
+    // when onAuthChange fires after initAuth already set the user).
+    let currentUserId = null;
     const unsubAuth = onAuthChange((profile) => {
       if (!mounted) return;
+      const incomingId = profile?.id ?? null;
+      if (incomingId === currentUserId) return; // no change — skip
+      currentUserId = incomingId;
       setUser(profile);
       if (profile) {
         refreshItems();
         loadUsers();
-        // Reset items subscription under the authed user
         unsubItems();
         unsubItems = subscribeToItems(setItems);
       } else {
@@ -183,6 +191,7 @@ export default function App() {
 
     return () => {
       mounted = false;
+      clearTimeout(authTimeout);
       document.head.removeChild(link);
       unsubAuth();
       unsubItems();
