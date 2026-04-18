@@ -4,7 +4,7 @@ import logo from './assets/logo.webp';
 
 // ── Supabase auth ─────────────────────────────────────────────────────────────
 import { supabase } from './lib/supabase';
-import { signIn, signUp, signOut, onAuthChange } from './lib/auth';
+import { signIn, signUp, signOut, onAuthChange, getCurrentUser } from './lib/auth';
 
 // ── Supabase data + storage ───────────────────────────────────────────────────
 import {
@@ -12,6 +12,7 @@ import {
   subscribeSettings as subscribeToSettings,
   subscribeCategories as subscribeToCategories,
   subscribeNotifications as subscribeToNotifications,
+  fetchItems,
   placeBid as placeBidRpc,
   buyItem as buyItemRpc,
   createItem as addItem,
@@ -116,32 +117,73 @@ export default function App() {
 
   // --- App start ---
   useEffect(() => {
+    let mounted = true;
+
     const link = document.createElement('link');
     link.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap';
     link.rel = 'stylesheet';
     document.head.appendChild(link);
 
-    const unsubAuth = onAuthChange((profile) => {
-      setUser(profile);
-      setAuthLoading(false);
-    });
-
-    const loadingTimeout = setTimeout(() => setAuthLoading(false), 5000);
-
-    const unsubItems = subscribeToItems(setItems);
-    const unsubSettings = subscribeToSettings((data) => {
-      if (data) setAppSettings(data);
-    });
+    const refreshItems = () => {
+      fetchItems()
+        .then((data) => { if (mounted) setItems(data); })
+        .catch((err) => console.error('fetchItems failed:', err));
+    };
 
     const loadUsers = async () => {
       const { data } = await supabase.from('profiles').select('id, name, role');
-      if (data) setDbUsers(data);
+      if (mounted && data) setDbUsers(data);
     };
-    loadUsers();
+
+    // Settings are public (RLS allows anon read), so we can subscribe immediately
+    const unsubSettings = subscribeToSettings((data) => {
+      if (mounted && data) setAppSettings(data);
+    });
+
+    // Auth-gated work: fetch items, load users, and set up realtime items
+    // subscription AFTER we know who the user is. This prevents the RLS race
+    // that caused items to appear empty on load.
+    let unsubItems = () => {};
+
+    const initAuth = async () => {
+      try {
+        const profile = await getCurrentUser();
+        if (!mounted) return;
+        setUser(profile);
+        if (profile) {
+          refreshItems();
+          loadUsers();
+          unsubItems = subscribeToItems(setItems);
+        }
+      } catch (err) {
+        console.error('Auth init failed:', err);
+      } finally {
+        if (mounted) setAuthLoading(false);
+      }
+    };
+    initAuth();
+
+    // Handles sign-in / sign-out AFTER mount. Skips INITIAL_SESSION internally
+    // so it doesn't race initAuth.
+    const unsubAuth = onAuthChange((profile) => {
+      if (!mounted) return;
+      setUser(profile);
+      if (profile) {
+        refreshItems();
+        loadUsers();
+        // Reset items subscription under the authed user
+        unsubItems();
+        unsubItems = subscribeToItems(setItems);
+      } else {
+        setItems([]);
+        unsubItems();
+        unsubItems = () => {};
+      }
+    });
 
     return () => {
+      mounted = false;
       document.head.removeChild(link);
-      clearTimeout(loadingTimeout);
       unsubAuth();
       unsubItems();
       unsubSettings();
@@ -212,6 +254,9 @@ export default function App() {
     try {
       const profile = await signIn(email, pass);
       setUser(profile);
+      // Kick off items fetch immediately so user sees content without waiting
+      // for onAuthChange round-trip.
+      fetchItems().then(setItems).catch(console.error);
       showAlert(`Welcome back, ${profile.name}! 👋`, 'success');
     } catch (err) {
       showAlert(err.message || 'Login failed. Please try again.', 'error');
@@ -313,15 +358,23 @@ export default function App() {
   const handleBgUpload = (e) => {
     const file = e.target.files[0];
     if (!file || file.size > 500 * 1024) return showAlert('Background max 500KB.', 'error');
-    const reader = new FileReader();
-    reader.onloadend = () => setBgPreview(reader.result);
-    reader.readAsDataURL(file);
+    // Keep the File for upload on save, and a preview URL for immediate display
+    const previewUrl = URL.createObjectURL(file);
+    setBgPreview({ file, preview: previewUrl });
   };
 
   const saveBgImage = async () => {
-    if (!bgPreview) return;
-    await saveLoginBg(bgPreview);
-    showAlert('Background updated!', 'success'); setBgPreview(null);
+    if (!bgPreview?.file) return;
+    try {
+      const { url } = await uploadItemImage(bgPreview.file, { prefix: 'login-bg' });
+      await saveLoginBg(url);
+      showAlert('Background updated!', 'success');
+      URL.revokeObjectURL(bgPreview.preview);
+      setBgPreview(null);
+    } catch (err) {
+      showAlert(err.message || 'Background upload failed.', 'error');
+      console.error(err);
+    }
   };
 
   const handleAddCategory = async (e) => {
@@ -655,7 +708,7 @@ export default function App() {
           <ErrorBoundary>
             <Suspense fallback={<div className="p-8 text-center text-gray-500 font-bold animate-pulse">Loading Admin Tools...</div>}>
               <AdminPanel
-                items={items} dbUsers={dbUsers} db={null} appId={null} doc={null} setDoc={null}
+                items={items} dbUsers={dbUsers}
                 showAlert={showAlert} colors={colors} appSettings={appSettings} bgPreview={bgPreview}
                 handleBgUpload={handleBgUpload} saveBgImage={saveBgImage}
                 editingItemId={editingItemId} setEditingItemId={setEditingItemId}

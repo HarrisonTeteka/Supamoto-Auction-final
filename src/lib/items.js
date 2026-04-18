@@ -1,15 +1,18 @@
 // src/lib/items.js
-// IMPORTANT: this module maps Supabase (snake_case, ISO timestamps, normalized
-// tables) back to the legacy Firebase shape (camelCase, ms timestamps, embedded
-// arrays) so that AuctionCard, ItemsBought, AdminPanel keep working unchanged.
+// Maps Supabase (snake_case, ISO timestamps, normalized tables) back to the
+// legacy Firebase shape (camelCase, ms timestamps, embedded arrays) so the
+// child components keep working unchanged.
+//
+// Key change vs. previous: subscribeItems no longer does an eager initial
+// fetch. App.jsx controls when to fetch (after auth is confirmed) via
+// refreshItems(). This prevents the "items don't show up" bug caused by
+// fetching before Supabase has a session.
 
 import { supabase } from './supabase'
 
 // ============================================================
-// PRIVATE — shape mapper
+// Shape mapper
 // ============================================================
-
-// Supabase item (with joined bids, purchases) -> legacy Firebase item
 const toLegacy = (row) => {
   if (!row) return row
   return {
@@ -41,39 +44,28 @@ const toLegacy = (row) => {
   }
 }
 
-// Single item + relations
 const fetchItemWithRelations = async (id) => {
   const { data, error } = await supabase
     .from('items')
-    .select(`
-      *,
-      bids ( bidder_name, amount, created_at ),
-      purchases ( buyer_name, created_at )
-    `)
+    .select(`*, bids(bidder_name, amount, created_at), purchases(buyer_name, created_at)`)
     .eq('id', id)
     .single()
   if (error) throw error
   return toLegacy(data)
 }
 
-// All items + relations, newest first
 const fetchAllItems = async () => {
   const { data, error } = await supabase
     .from('items')
-    .select(`
-      *,
-      bids ( bidder_name, amount, created_at ),
-      purchases ( buyer_name, created_at )
-    `)
+    .select(`*, bids(bidder_name, amount, created_at), purchases(buyer_name, created_at)`)
     .order('created_at', { ascending: false })
   if (error) throw error
   return data.map(toLegacy)
 }
 
 // ============================================================
-// READS (all return legacy-shape items)
+// Reads
 // ============================================================
-
 export const fetchItems = fetchAllItems
 
 export const fetchCategories = async () => {
@@ -98,27 +90,26 @@ export const fetchSettings = async () => {
 }
 
 // ============================================================
-// REALTIME SUBSCRIPTIONS
+// Realtime subscriptions
 // ============================================================
-// place_bid() and buy_item() RPCs always UPDATE items alongside inserting
-// into bids/purchases, so subscribing to items catches everything we need.
-
+// subscribeItems now only sets up the realtime listener. Initial fetch is
+// the caller's responsibility — App.jsx calls refreshItems() after auth.
+// This fixes the "items empty on load" bug (RLS blocked the fetch that
+// happened before session hydration).
 export const subscribeItems = (setItems) => {
-  fetchAllItems().then(setItems).catch(console.error)
-
   const channel = supabase
     .channel('items-changes')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'items' }, async (payload) => {
       try {
         const fresh = await fetchItemWithRelations(payload.new.id)
         setItems((prev) => [fresh, ...prev].sort((a, b) => b.createdAt - a.createdAt))
-      } catch (e) { console.error(e) }
+      } catch (e) { console.error('items insert refresh failed:', e) }
     })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'items' }, async (payload) => {
       try {
         const fresh = await fetchItemWithRelations(payload.new.id)
         setItems((prev) => prev.map((i) => (i.id === fresh.id ? fresh : i)))
-      } catch (e) { console.error(e) }
+      } catch (e) { console.error('items update refresh failed:', e) }
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'items' }, (payload) => {
       setItems((prev) => prev.filter((i) => i.id !== payload.old.id))
@@ -159,10 +150,8 @@ export const subscribeCategories = (setCategories) => {
   return () => supabase.removeChannel(channel)
 }
 
-// Matches the old App.jsx usage: listener keyed on user.name
 export const subscribeNotifications = (userName, onNotification) => {
   if (!userName) return () => {}
-
   let channel = null
 
   const setup = async () => {
@@ -174,7 +163,6 @@ export const subscribeNotifications = (userName, onNotification) => {
     if (!profile) return
     const userId = profile.id
 
-    // Deliver existing unread on mount
     const { data: existing } = await supabase
       .from('notifications')
       .select('*')
@@ -182,10 +170,7 @@ export const subscribeNotifications = (userName, onNotification) => {
       .eq('read', false)
     if (existing?.length) {
       existing.forEach(onNotification)
-      await supabase
-        .from('notifications')
-        .update({ read: true })
-        .in('id', existing.map((n) => n.id))
+      await supabase.from('notifications').update({ read: true }).in('id', existing.map((n) => n.id))
     }
 
     channel = supabase
@@ -206,14 +191,10 @@ export const subscribeNotifications = (userName, onNotification) => {
 }
 
 // ============================================================
-// MUTATIONS
+// Mutations
 // ============================================================
-
 export const placeBid = async (itemId, amount) => {
-  const { data, error } = await supabase.rpc('place_bid', {
-    p_item_id: itemId,
-    p_amount: amount,
-  })
+  const { data, error } = await supabase.rpc('place_bid', { p_item_id: itemId, p_amount: amount })
   if (error) throw new Error(error.message)
   return data
 }
@@ -224,7 +205,6 @@ export const buyItem = async (itemId) => {
   return data
 }
 
-// Admin create — accepts the camelCase shape the form produces
 export const createItem = async (form) => {
   const row = {
     name: form.name,
@@ -234,8 +214,8 @@ export const createItem = async (form) => {
     start_price: form.startPrice ? parseFloat(form.startPrice) : null,
     price: form.price ? parseFloat(form.price) : null,
     stock: form.stock ? parseInt(form.stock) : null,
-    image_url: form.image || null,
-    image_url_2: form.image2 || null,
+    image_url: typeof form.image === 'string' ? form.image : null,
+    image_url_2: typeof form.image2 === 'string' ? form.image2 : null,
     is_faulty: !!form.isFaulty,
     fault_description: form.isFaulty ? form.faultDescription : null,
   }
@@ -244,15 +224,16 @@ export const createItem = async (form) => {
   return data
 }
 
-// Admin edit — camelCase in, translated here
 export const updateItem = async (id, form) => {
   const patch = {
     name: form.name,
     description: form.desc,
     category: form.category,
     start_price: form.startPrice ? parseFloat(form.startPrice) : null,
-    image_url: form.image || null,
-    image_url_2: form.image2 || null,
+    // Only overwrite image fields if a URL string is provided. File instances
+    // should have been resolved to URLs upstream; undefined leaves the column alone.
+    image_url: typeof form.image === 'string' ? form.image : undefined,
+    image_url_2: typeof form.image2 === 'string' ? form.image2 : undefined,
     is_faulty: !!form.isFaulty,
     fault_description: form.isFaulty ? form.faultDescription : null,
     price: form.price ? parseFloat(form.price) : null,
@@ -279,10 +260,8 @@ export const addCategory = async (name) => {
   if (error) throw error
 }
 
-// Called from AdminPanel — accepts ms timestamps, stores as ISO
 export const saveSchedule = async ({ auctionStart, auctionEnd }) => {
-  const current = await supabase
-    .from('settings').select('value').eq('key', 'auction_schedule').single()
+  const current = await supabase.from('settings').select('value').eq('key', 'auction_schedule').single()
   const next = { ...(current.data?.value || {}) }
   next.auction_start = auctionStart ? new Date(auctionStart).toISOString() : null
   next.auction_end = auctionEnd ? new Date(auctionEnd).toISOString() : null
@@ -294,8 +273,7 @@ export const saveSchedule = async ({ auctionStart, auctionEnd }) => {
 }
 
 export const saveLoginBg = async (url) => {
-  const current = await supabase
-    .from('settings').select('value').eq('key', 'auction_schedule').single()
+  const current = await supabase.from('settings').select('value').eq('key', 'auction_schedule').single()
   const next = { ...(current.data?.value || {}), login_bg: url }
   const { error } = await supabase
     .from('settings')
@@ -304,20 +282,16 @@ export const saveLoginBg = async (url) => {
   if (error) throw error
 }
 
-// AdminPanel's "Reset All Bids & Purchases"
 export const resetAuctionData = async () => {
   const { data: items, error: fetchErr } = await supabase
-    .from('items')
-    .select('id, type, stock, purchases(id)')
+    .from('items').select('id, type, stock, purchases(id)')
   if (fetchErr) throw fetchErr
 
-  // Wipe children first (FK would cascade anyway, but explicit is safer)
   const nullId = '00000000-0000-0000-0000-000000000000'
   await supabase.from('bids').delete().neq('id', nullId)
   await supabase.from('purchases').delete().neq('id', nullId)
   await supabase.from('notifications').delete().neq('id', nullId)
 
-  // Reset items
   for (const it of items) {
     const patch = {
       current_bid: 0,

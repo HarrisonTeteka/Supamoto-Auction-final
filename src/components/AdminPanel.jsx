@@ -1,11 +1,11 @@
 import React from 'react';
-import { doc, setDoc, updateDoc } from "firebase/firestore";
+import { saveSchedule, resetAuctionData } from '../lib/items';
 import { MonitorSmartphone, Edit2, Plus, Tag, XCircle, Clock, Trophy, Download, Calendar, RotateCcw } from 'lucide-react';
 
 export default function AdminPanel({
   items = [],
   dbUsers = [],
-  db, appId, showAlert,
+  showAlert,
   colors, appSettings, bgPreview, handleBgUpload, saveBgImage,
   editingItemId, setEditingItemId,
   showCategoryForm, setShowCategoryForm, newCategoryName, setNewCategoryName, handleAddCategory,
@@ -61,8 +61,7 @@ export default function AdminPanel({
     if (endTs <= startTs)
       return showAlert?.('End time must be after start time.', 'error');
     try {
-      const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'general');
-      await setDoc(settingsRef, { auctionStart: startTs, auctionEnd: endTs }, { merge: true });
+      await saveSchedule({ auctionStart: startTs, auctionEnd: endTs });
       showAlert?.('Auction schedule saved! ✅', 'success');
     } catch (err) {
       showAlert?.('Failed to save schedule.', 'error');
@@ -74,17 +73,7 @@ export default function AdminPanel({
   const resetAuction = async () => {
     if (!window.confirm('⚠️ RESET AUCTION?\n\nThis will:\n• Clear ALL bids on every item\n• Clear ALL purchases\n• Restore stock quantities\n• Re-open all closed items\n\nThis cannot be undone. Are you sure?')) return;
     try {
-      const resetPromises = items.map(item =>
-        updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id), {
-          currentBid: 0,
-          topBidder: null,
-          bids: [],
-          purchases: item.type === 'shop' ? [] : null,
-          stock: item.type === 'shop' ? (Number(item.stock) + (item.purchases?.length || 0)) : null,
-          status: 'open'
-        })
-      );
-      await Promise.all(resetPromises);
+      await resetAuctionData();
       showAlert?.('✅ Auction reset! All bids and purchases cleared.', 'success');
     } catch (err) {
       showAlert?.('Failed to reset auction.', 'error');
@@ -340,7 +329,7 @@ export default function AdminPanel({
           </div>
           {bgPreview && (
             <div className="flex flex-col items-center gap-2">
-              <img src={bgPreview} alt="Preview" className="w-24 h-16 object-cover rounded-lg border-2 border-green-400 shadow-md" />
+              <img src={bgPreview.preview} alt="Preview" className="w-24 h-16 object-cover rounded-lg border-2 border-green-400 shadow-md" />
               <button onClick={saveBgImage} style={{ backgroundColor: colors.mossGreen }} className="text-white text-xs font-bold px-4 py-1.5 rounded-lg hover:opacity-90 transition-opacity">Save Background</button>
             </div>
           )}
