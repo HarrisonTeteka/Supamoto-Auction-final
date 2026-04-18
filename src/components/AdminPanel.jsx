@@ -21,23 +21,18 @@ export default function AdminPanel({
     const shopItems  = items.filter(item => item.type === 'shop' && item.purchases?.length > 0);
     if (!bidWinners.length && !shopItems.length) return showAlert?.("No auction data to export yet.", "error");
 
-    const fmtPayment = (pm) => pm === 'mobile_money' ? 'Mobile Money' : 'Payroll';
-    let csvContent = "Type,Item Name,Category,Person,Amount (K),Payment Method\n";
+    let csvContent = "Type,Item Name,Category,Person,Amount (K)\n";
     bidWinners.forEach(item => {
       const name   = (item.name || "Unnamed").replace(/,/g, "");
       const winner = (item.topBidder || "").replace(/,/g, "");
       const price  = item.currentBid || 0;
-      const winnerBid = [...(item.bids || [])].sort((a, b) => b.amount - a.amount)
-        .find(b => b.bidder === item.topBidder);
-      const payment = fmtPayment(winnerBid?.payment_method);
-      csvContent += `"Bid Winner","${name}","${item.category || ''}","${winner}",${price},"${payment}"\n`;
+      csvContent += `"Bid Winner","${name}","${item.category || ''}","${winner}",${price}\n`;
     });
     shopItems.forEach(item => {
       const name = (item.name || "Unnamed").replace(/,/g, "");
       (item.purchases || []).forEach(p => {
         const buyer = (p.buyer || "").replace(/,/g, "");
-        const payment = fmtPayment(p.payment_method);
-        csvContent += `"Fixed Price","${name}","${item.category || ''}","${buyer}",${item.price || 0},"${payment}"\n`;
+        csvContent += `"Fixed Price","${name}","${item.category || ''}","${buyer}",${item.price || 0}\n`;
       });
     });
 
@@ -187,7 +182,7 @@ export default function AdminPanel({
             ⬇ Export CSV for HR
           </button>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-80 overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-10">
               <tr>
@@ -197,9 +192,6 @@ export default function AdminPanel({
                 <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Winning Price</th>
               </tr>
             </thead>
-          </table>
-          <div className="overflow-y-auto" style={{ maxHeight: '320px' }}>
-          <table className="w-full text-sm">
             <tbody className="divide-y divide-gray-50">
               {items.filter(i => i.topBidder).length === 0 ? (
                 <tr><td colSpan={4} className="text-center py-12 text-gray-400">No auction winners yet</td></tr>
@@ -222,7 +214,6 @@ export default function AdminPanel({
               )}
             </tbody>
           </table>
-          </div>
         </div>
       </section>
 
@@ -238,7 +229,7 @@ export default function AdminPanel({
             </span>
           </h3>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-80 overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-10">
               <tr>
@@ -248,9 +239,6 @@ export default function AdminPanel({
                 <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Price</th>
               </tr>
             </thead>
-          </table>
-          <div className="overflow-y-auto" style={{ maxHeight: '320px' }}>
-          <table className="w-full text-sm">
             <tbody className="divide-y divide-gray-50">
               {items.filter(i => i.type === 'shop' && i.purchases?.length > 0).flatMap(item =>
                 (item.purchases || []).map((p, pi) => ({ ...p, itemName: item.name, price: item.price, category: item.category, key: item.id + '-' + pi }))
@@ -277,7 +265,6 @@ export default function AdminPanel({
               )}
             </tbody>
           </table>
-          </div>
         </div>
       </section>
 
