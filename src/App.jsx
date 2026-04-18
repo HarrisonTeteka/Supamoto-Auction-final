@@ -1,7 +1,7 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, lazy, Suspense, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, setDoc, runTransaction } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, setDoc, runTransaction, getDocs } from 'firebase/firestore';
 import { Flame, User, Trophy, Shield, Lock, Search, XCircle, Tag, ChevronLeft, ChevronRight, AlertTriangle, UserPlus } from 'lucide-react';
 import logo from './assets/logo.webp';
 
@@ -108,6 +108,7 @@ export default function App() {
   const colors = { tangerine: '#F58202', mossGreen: '#336021', auburn: '#9E2A2B', cornsilk: '#F9EDCC' };
 
   const [user, setUser]                     = useState(null);
+  const [renderError, setRenderError]       = useState(null);
   const [dbUsers, setDbUsers]               = useState([]);
   const [items, setItems]                   = useState([]);
   const [alerts, setAlerts]                 = useState([]);
@@ -128,34 +129,47 @@ export default function App() {
   const [termsAccepted, setTermsAccepted]   = useState(false);
   const [pendingUser, setPendingUser]       = useState(null);
   const [timeLeft, setTimeLeft]             = useState('');
+  const [appReady, setAppReady]             = useState(false);
   const [auctionStartInput, setAuctionStartInput] = useState('');
   const [auctionEndInput, setAuctionEndInput]     = useState('');
 
   // Login form state
-  const [loginName, setLoginName]           = useState('');
+  const [loginEmail, setLoginEmail]         = useState('');
   const [loginPass, setLoginPass]           = useState('');
   const [loginLoading, setLoginLoading]     = useState(false);
 
   // Register form state
-  const [regName, setRegName]               = useState('');
+  const [regFirstName, setRegFirstName]     = useState('');
+  const [regLastName, setRegLastName]       = useState('');
+  const [regEmail, setRegEmail]             = useState('');
   const [regPass, setRegPass]               = useState('');
+  const [regPassConfirm, setRegPassConfirm] = useState('');
   const [regLoading, setRegLoading]         = useState(false);
 
   // --- App start ---
   useEffect(() => {
+    window.onerror = (msg) => { setRenderError(String(msg)); return false; };
+    window.onunhandledrejection = (e) => { console.error('Unhandled:', e.reason); };
     const link = document.createElement('link');
     link.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap';
     link.rel = 'stylesheet';
     document.head.appendChild(link);
     signInAnonymously(auth).catch(() => {});
 
-    const unsubItems    = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'items'), snap =>
-      setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt)));
+    let itemsThrottle = null;
+    const unsubItems = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'items'), snap => {
+      if (itemsThrottle) return;
+      itemsThrottle = setTimeout(() => { itemsThrottle = null; }, 1000);
+      setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt));
+    });
     const unsubSettings = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'general'), snap => {
       if (snap.exists()) setAppSettings(snap.data());
+      setAppReady(true);
     });
-    const unsubUsers    = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), snap =>
-      setDbUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'users'))
+      .then(snap => setDbUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+      .catch(() => {});
+    const unsubUsers = () => {};
 
     return () => { document.head.removeChild(link); unsubItems(); unsubSettings(); unsubUsers(); };
   }, []);
@@ -179,12 +193,18 @@ export default function App() {
       const cats = snap.docs.map(d => d.data().name);
       if (cats.length > 0) setCategories(cats);
     });
-    const unsubNotifs = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'notifications'), snap => {
-      const unread = snap.docs.filter(d => { const n = d.data(); return n.to === user.name && !n.read; });
-      if (unread.length === 0) return;
-      unread.forEach(d => showAlert(`⚠️ ${d.data().message}`, 'error'));
-      Promise.all(unread.map(d => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', d.id), { read: true }))).catch(console.error);
-    });
+    const checkNotifs = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'notifications'));
+        const unread = snap.docs.filter(d => { const n = d.data(); return n.to === user.name && !n.read; });
+        if (unread.length === 0) return;
+        unread.forEach(d => showAlert(`⚠️ ${d.data().message}`, 'error'));
+        Promise.all(unread.map(d => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', d.id), { read: true }))).catch(console.error);
+      } catch {}
+    };
+    checkNotifs();
+    const notifInterval = setInterval(checkNotifs, 15000);
+    const unsubNotifs = () => clearInterval(notifInterval);
     return () => { unsubCat(); unsubNotifs(); };
   }, [user]);
 
@@ -198,6 +218,23 @@ export default function App() {
 
   const isAuctionClosed = () => appSettings?.auctionEnd && Date.now() >= appSettings.auctionEnd;
 
+  // --- Memoized item lists (must be before any early returns) ---
+  const filteredItems = useMemo(() => items.filter(i => {
+    const name = (i.name || '').toLowerCase();
+    const desc = (i.desc || '').toLowerCase();
+    const query = searchQuery.toLowerCase();
+    const matchesSearch = name.includes(query) || desc.includes(query);
+    const matchesCategory = selectedCategory === 'All' || i.category === selectedCategory;
+    return matchesSearch && matchesCategory;
+  }), [items, searchQuery, selectedCategory]);
+
+  const groupedItems = useMemo(() => filteredItems.reduce((acc, item) => {
+    const cat = item.category || 'Uncategorized';
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(item);
+    return acc;
+  }, {}), [filteredItems]);
+
   const showAlert = (message, type = 'info') => {
     const id = Date.now();
     setAlerts(prev => [...prev, { id, message, type }]);
@@ -207,14 +244,14 @@ export default function App() {
   // --- LOGIN (existing users only) ---
   const handleLogin = async (e) => {
     e.preventDefault();
-    const name = loginName.trim();
-    const pass = loginPass.trim();
-    if (!name || !pass) return showAlert('Please enter your name and password.', 'error');
+    const email = loginEmail.trim().toLowerCase();
+    const pass  = loginPass.trim();
+    if (!email || !pass) return showAlert('Please enter your email and password.', 'error');
     setLoginLoading(true);
-    await new Promise(r => setTimeout(r, 50)); // yield to browser before heavy crypto
-    const existing = dbUsers.find(u => u.name.toLowerCase() === name.toLowerCase());
+    await new Promise(r => setTimeout(r, 50));
+    const existing = dbUsers.find(u => (u.email || '').toLowerCase() === email);
     if (!existing) {
-      showAlert('Account not found. Please create one below.', 'error');
+      showAlert('No account found with that email. Please create one.', 'error');
       setLoginLoading(false);
       return;
     }
@@ -231,29 +268,28 @@ export default function App() {
   // --- REGISTER (new users — show T&C first) ---
   const handleRegister = async (e) => {
     e.preventDefault();
-    const name = regName.trim();
-    const pass = regPass.trim();
-    if (!name || !pass) return showAlert('Please fill in all fields.', 'error');
+    const firstName = regFirstName.trim();
+    const lastName  = regLastName.trim();
+    const email     = regEmail.trim();
+    const pass      = regPass.trim();
+    const passConfirm = regPassConfirm.trim();
+    if (!firstName || !lastName || !email || !pass || !passConfirm) return showAlert('Please fill in all fields.', 'error');
     if (pass.length < 4) return showAlert('Password must be at least 4 characters.', 'error');
+    if (pass !== passConfirm) return showAlert('Passwords do not match.', 'error');
+    if (!email.includes('@')) return showAlert('Please enter a valid company email.', 'error');
+    const name = `${firstName} ${lastName}`;
     const existing = dbUsers.find(u => u.name.toLowerCase() === name.toLowerCase());
-    if (existing) return showAlert('That name is already taken. Please choose another.', 'error');
-    setPendingUser({ name, password: pass });
-    setShowTerms(true);
-  };
-
-  const completeRegistration = async () => {
-    if (!termsAccepted || !pendingUser) return;
+    if (existing) return showAlert('That name is already registered. Please contact admin.', 'error');
     setRegLoading(true);
-    await new Promise(r => setTimeout(r, 50)); // yield to browser before heavy crypto
+    await new Promise(r => setTimeout(r, 50));
     try {
-      const hashedPassword = await hashPassword(pendingUser.password);
+      const hashedPassword = await hashPassword(pass);
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'users'), {
-        name: pendingUser.name, password: hashedPassword, role: 'user', createdAt: Date.now()
+        name, email, password: hashedPassword, role: 'user', createdAt: Date.now()
       });
-      setUser({ name: pendingUser.name, role: 'user' });
-      showAlert(`Account created! Welcome, ${pendingUser.name}! 🎉`, 'success');
-      setShowTerms(false); setTermsAccepted(false); setPendingUser(null);
-      setRegName(''); setRegPass('');
+      setUser({ name, role: 'user' });
+      showAlert(`Account created! Welcome, ${firstName}! 🎉`, 'success');
+      setRegFirstName(''); setRegLastName(''); setRegEmail(''); setRegPass(''); setRegPassConfirm('');
     } catch {
       showAlert('Error creating account. Please try again.', 'error');
     }
@@ -267,7 +303,7 @@ export default function App() {
     if (isNaN(amt) || amt <= 0) return showAlert('Please enter a valid bid amount.', 'error');
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id);
     try {
-      await runTransaction(db, async (transaction) => {
+      const result = await runTransaction(db, async (transaction) => {
         const snap = await transaction.get(itemRef);
         if (!snap.exists()) throw new Error('Item no longer exists.');
         const live = snap.data();
@@ -275,20 +311,23 @@ export default function App() {
         const minBid = live.currentBid === 0 ? live.startPrice : live.currentBid + 1;
         if (amt < minBid) throw new Error(`Bid must be at least K${minBid}.`);
         if (live.topBidder === user.name && live.currentBid === amt) throw new Error('You are already the top bidder!');
-        if (live.topBidder && live.topBidder !== user.name) {
-          const notifRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'notifications'));
-          transaction.set(notifRef, {
-            to: live.topBidder, message: `You've been outbid on "${live.name}"! New bid: K${amt.toLocaleString()}. Bid higher to stay in the lead.`,
-            itemId: item.id, itemName: live.name, newBid: amt, read: false, timestamp: Date.now()
-          });
-        }
+        const prevTopBidder = live.topBidder && live.topBidder !== user.name ? live.topBidder : null;
         transaction.update(itemRef, {
           currentBid: amt, topBidder: user.name,
-          bids: [...(live.bids || []), { bidder: user.name, amount: amt, timestamp: Date.now() }]
+          bidCount: (live.bidCount || 0) + 1,
+          lastBidAt: Date.now()
         });
+        return { prevTopBidder, itemName: live.name };
       });
       setBidInputs(prev => ({ ...prev, [item.id]: '' }));
       showAlert(`✅ Bid of K${amt.toLocaleString()} placed!`, 'success');
+      if (result?.prevTopBidder) {
+        addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'notifications'), {
+          to: result.prevTopBidder,
+          message: `You've been outbid on "${result.itemName}"! New bid: K${amt.toLocaleString()}.`,
+          itemId: item.id, read: false, timestamp: Date.now()
+        }).catch(() => {});
+      }
     } catch (err) { showAlert(err.message || 'Failed to place bid.', 'error'); }
   };
 
@@ -301,7 +340,7 @@ export default function App() {
     if (item.stock <= 0) return showAlert('Sorry, this item is out of stock.', 'error');
     const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'items', item.id);
     try {
-      await runTransaction(db, async (transaction) => {
+      const result = await runTransaction(db, async (transaction) => {
         const snap = await transaction.get(itemRef);
         if (!snap.exists()) throw new Error('Item no longer exists.');
         const live = snap.data();
@@ -398,68 +437,72 @@ export default function App() {
 
   // =============================================
   // =============================================
+  // RENDER ERROR FALLBACK
+  // =============================================
+  if (renderError) {
+    return (
+      <div style={{ background: '#336021' }} className="min-h-screen flex items-center justify-center p-6">
+        <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-2xl">
+          <p className="text-2xl mb-2">⚠️</p>
+          <p className="text-red-700 font-bold text-lg mb-2">Something went wrong</p>
+          <p className="text-gray-500 text-sm mb-6">{renderError}</p>
+          <button onClick={() => { setRenderError(null); setUser(null); }}
+            className="bg-green-700 text-white px-6 py-3 rounded-xl font-bold hover:bg-green-800 transition-all">
+            Reload App
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // =============================================
+  // LOADING STATE
+  // =============================================
+  if (!appReady) {
+    return (
+      <div style={{ background: 'linear-gradient(135deg, #336021 0%, #1a3a10 50%, #9E2A2B 100%)' }}
+        className="min-h-screen flex items-center justify-center">
+        <div className="text-center text-white">
+          <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="font-semibold text-white/80">Loading SupaMoto Auction...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // =============================================
   // LOGIN PAGE
   // =============================================
   if (!user) {
     const bgStyle = appSettings?.loginBg
-      ? { backgroundImage: `linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0.65)), url(${appSettings.loginBg})`, backgroundSize: 'cover', backgroundPosition: 'center' }
-      : { background: `linear-gradient(135deg, #336021 0%, #1a3a10 50%, #9E2A2B 100%)` };
+      ? { backgroundImage: `linear-gradient(rgba(0,0,0,0.6),rgba(0,0,0,0.7)), url(${appSettings.loginBg})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+      : { background: `linear-gradient(135deg, #336021 0%, #1a3a10 60%, #9E2A2B 100%)` };
 
     return (
       <div style={{ fontFamily: "'Poppins', sans-serif", ...bgStyle }} className="min-h-screen flex items-center justify-center p-4">
         <AlertToast alerts={alerts} colors={colors} />
 
-        {/* Terms Modal */}
-        {showTerms && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-            <div className="bg-white rounded-2xl p-6 max-w-md w-full border-t-8 shadow-2xl" style={{ borderColor: colors.mossGreen }}>
-              <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-800">
-                <AlertTriangle className="text-orange-500 w-6 h-6" /> Auction Terms
-              </h2>
-              <div className="bg-orange-50 rounded-lg p-4 border border-orange-100 mb-5">
-                <p className="text-sm font-medium leading-relaxed text-gray-700">
-                  These terms have been established by management. By proceeding, you acknowledge that all actions and decisions are your responsibility, including any resulting payroll deductions and penalties.
-                </p>
-              </div>
-              <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer mb-6 border border-gray-200 hover:bg-gray-100 transition-colors">
-                <input type="checkbox" checked={termsAccepted} onChange={e => setTermsAccepted(e.target.checked)} className="mt-0.5 w-5 h-5 cursor-pointer accent-green-700" />
-                <span className="text-sm font-semibold text-gray-700">I have read and agree to the auction terms.</span>
-              </label>
-              <div className="flex gap-3">
-                <button onClick={() => { setShowTerms(false); setPendingUser(null); setTermsAccepted(false); }} className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300 transition-colors">Cancel</button>
-                <button onClick={completeRegistration} disabled={!termsAccepted || regLoading} style={{ backgroundColor: colors.mossGreen }} className={`flex-1 py-3 text-white rounded-xl font-bold transition-all ${(!termsAccepted || regLoading) ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}>
-                  {regLoading ? 'Creating…' : 'Confirm & Join'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="w-full max-w-sm">
-
+        <div className="w-full max-w-md">
           {/* Header */}
-          <div className="text-center mb-8">
+          <div className="text-center mb-6">
             <div className="flex justify-center mb-4">
-              <div className="bg-white/15 backdrop-blur-sm p-5 rounded-full border-4 border-white/30 shadow-2xl">
-  <img src={logo} alt="SupaMoto Logo" className="w-32 h-32 object-contain drop-shadow-2xl" />
-</div>
+              <div className="bg-white/10 backdrop-blur-sm p-4 rounded-full border-2 border-white/20 shadow-2xl">
+                <img src={logo} alt="SupaMoto Logo" className="w-20 h-20 object-contain drop-shadow-2xl" />
+              </div>
             </div>
             <h1 className="text-3xl font-extrabold text-white tracking-tight drop-shadow-lg">SupaMoto Auction 2026</h1>
-            <p className="text-white/60 mt-2 text-xs font-medium tracking-widest uppercase">Chinja Malasha  Chinja Umoyo</p>
+            <p className="text-white/50 mt-1 text-xs font-medium tracking-widest uppercase">Chinja Malasha · Chinja Umoyo</p>
           </div>
 
           {/* Card with Tabs */}
           <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
 
             {/* Tab switcher */}
-            <div className="flex border-b border-gray-100">
-              <button
-                onClick={() => { setLoginName(''); setLoginPass(''); setRegName(''); setRegPass(''); }}
-                className={`flex-1 py-4 text-sm font-bold transition-all flex items-center justify-center gap-2 ${!showTerms && regName === '' && regPass === '' && loginName === '' && loginPass === '' || true ? '' : ''}`}
-                id="tab-login"
-                data-active="true"
-                style={{ color: colors.mossGreen, borderBottom: `3px solid ${colors.mossGreen}` }}
-                onClick={(e) => {
+            <div className="flex">
+              <button id="tab-login"
+                style={{ color: colors.mossGreen, borderBottom: `3px solid ${colors.mossGreen}`, background: 'white' }}
+                className="flex-1 py-4 text-sm font-bold transition-all flex items-center justify-center gap-2"
+                onClick={() => {
                   document.getElementById('panel-login').style.display = 'block';
                   document.getElementById('panel-register').style.display = 'none';
                   document.getElementById('tab-login').style.borderBottom = `3px solid ${colors.mossGreen}`;
@@ -468,14 +511,12 @@ export default function App() {
                   document.getElementById('tab-register').style.borderBottom = '3px solid transparent';
                   document.getElementById('tab-register').style.color = '#9ca3af';
                   document.getElementById('tab-register').style.background = '#f9fafb';
-                }}
-              >
+                }}>
                 <User className="w-4 h-4" /> Login
               </button>
-              <button
-                id="tab-register"
-                className="flex-1 py-4 text-sm font-bold transition-all flex items-center justify-center gap-2"
+              <button id="tab-register"
                 style={{ color: '#9ca3af', borderBottom: '3px solid transparent', background: '#f9fafb' }}
+                className="flex-1 py-4 text-sm font-bold transition-all flex items-center justify-center gap-2"
                 onClick={() => {
                   document.getElementById('panel-login').style.display = 'none';
                   document.getElementById('panel-register').style.display = 'block';
@@ -485,87 +526,136 @@ export default function App() {
                   document.getElementById('tab-login').style.borderBottom = '3px solid transparent';
                   document.getElementById('tab-login').style.color = '#9ca3af';
                   document.getElementById('tab-login').style.background = '#f9fafb';
-                }}
-              >
+                }}>
                 <UserPlus className="w-4 h-4" /> Create Account
               </button>
             </div>
 
             {/* Login Panel */}
-            <div id="panel-login" className="p-8">
+            <div id="panel-login" className="p-7">
+              <p className="text-gray-500 text-sm mb-5 text-center">Welcome back! Enter your details to access the auction.</p>
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-600 mb-1">Full Name</label>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Company Email</label>
                   <div className="relative">
-                    <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input type="text" required value={loginName} onChange={e => setLoginName(e.target.value)}
-                      placeholder="Enter your full name"
-                      className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-600 transition-all" />
+                    <svg className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                    <input type="email" required value={loginEmail} onChange={e => setLoginEmail(e.target.value)}
+                      placeholder="yourname@supamoto.com"
+                      className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:border-transparent transition-all bg-gray-50 focus:bg-white" />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-gray-600 mb-1">Password</label>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Password</label>
                   <div className="relative">
-                    <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input type="password" required value={loginPass} onChange={e => setLoginPass(e.target.value)}
                       placeholder="Enter your password"
-                      className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-600 transition-all" />
+                      className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:border-transparent transition-all bg-gray-50 focus:bg-white" />
                   </div>
                 </div>
+
+                {/* Acknowledgement checkbox on login */}
+                <div className="rounded-xl border border-orange-200 bg-orange-50 p-3">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input type="checkbox" required className="mt-0.5 w-4 h-4 cursor-pointer accent-green-700 shrink-0" />
+                    <span className="text-xs text-gray-600 leading-relaxed">
+                      I acknowledge that all bids placed are <strong className="text-gray-800">binding and final</strong>. Winning bids will be subject to payroll deductions as per management policy.
+                    </span>
+                  </label>
+                </div>
+
                 <button type="submit" disabled={loginLoading}
                   style={{ backgroundColor: colors.mossGreen }}
-                  className="w-full py-3 text-white font-bold rounded-xl shadow-md hover:opacity-90 transition-opacity disabled:opacity-60 mt-2">
-                  {loginLoading ? 'Logging in…' : 'Login'}
+                  className="w-full py-3.5 text-white font-bold rounded-xl shadow-md hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2">
+                  {loginLoading
+                    ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> Verifying…</>
+                    : <><Shield className="w-4 h-4" /> Login to Auction</>}
                 </button>
               </form>
               <p className="text-center text-xs text-gray-400 mt-4">
                 New here?{' '}
                 <button className="font-semibold hover:underline" style={{ color: colors.tangerine }}
-                  onClick={() => {
-                    document.getElementById('tab-register').click();
-                  }}>Create an account</button>
+                  onClick={() => document.getElementById('tab-register').click()}>Create an account</button>
               </p>
             </div>
 
             {/* Register Panel */}
-            <div id="panel-register" className="p-8" style={{ display: 'none' }}>
-              <form onSubmit={handleRegister} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-600 mb-1">Full Name</label>
-                  <div className="relative">
-                    <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input type="text" required value={regName} onChange={e => setRegName(e.target.value)}
-                      placeholder="Enter your full name"
-                      className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-400 transition-all" />
+            <div id="panel-register" className="p-7" style={{ display: 'none' }}>
+              <p className="text-gray-500 text-sm mb-5 text-center">First time? Create your account to start bidding.</p>
+              <form onSubmit={handleRegister} className="space-y-3">
+
+                {/* First + Last Name row */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">First Name</label>
+                    <div className="relative">
+                      <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input type="text" required value={regFirstName} onChange={e => setRegFirstName(e.target.value)}
+                        placeholder="First name"
+                        className="w-full pl-9 pr-3 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 transition-all bg-gray-50 focus:bg-white" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Last Name</label>
+                    <div className="relative">
+                      <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input type="text" required value={regLastName} onChange={e => setRegLastName(e.target.value)}
+                        placeholder="Last name"
+                        className="w-full pl-9 pr-3 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 transition-all bg-gray-50 focus:bg-white" />
+                    </div>
                   </div>
                 </div>
+
+                {/* Company Email */}
                 <div>
-                  <label className="block text-sm font-semibold text-gray-600 mb-1">Create Password</label>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Company Email</label>
                   <div className="relative">
-                    <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <svg className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                    <input type="email" required value={regEmail} onChange={e => setRegEmail(e.target.value)}
+                      placeholder="yourname@supamoto.com"
+                      className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 transition-all bg-gray-50 focus:bg-white" />
+                  </div>
+                </div>
+
+                {/* Password */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Password</label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input type="password" required value={regPass} onChange={e => setRegPass(e.target.value)}
-                      placeholder="Choose a password (min 4 chars)"
-                      className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-400 transition-all" />
+                      placeholder="Create a password (min 4 chars)"
+                      className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 transition-all bg-gray-50 focus:bg-white" />
                   </div>
                 </div>
+
+                {/* Re-enter Password */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Re-enter Password</label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input type="password" required value={regPassConfirm} onChange={e => setRegPassConfirm(e.target.value)}
+                      placeholder="Confirm your password"
+                      className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 transition-all bg-gray-50 focus:bg-white" />
+                  </div>
+                </div>
+
                 <button type="submit" disabled={regLoading}
                   style={{ backgroundColor: colors.tangerine }}
-                  className="w-full py-3 text-white font-bold rounded-xl shadow-md hover:opacity-90 transition-opacity disabled:opacity-60 mt-2">
-                  {regLoading ? 'Creating…' : 'Sign Up'}
+                  className="w-full py-3.5 text-white font-bold rounded-xl shadow-md hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2 mt-1">
+                  {regLoading
+                    ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> Creating Account…</>
+                    : <><UserPlus className="w-4 h-4" /> Create My Account</>}
                 </button>
               </form>
               <p className="text-center text-xs text-gray-400 mt-4">
                 Already have an account?{' '}
                 <button className="font-semibold hover:underline" style={{ color: colors.mossGreen }}
-                  onClick={() => {
-                    document.getElementById('tab-login').click();
-                  }}>Login here</button>
+                  onClick={() => document.getElementById('tab-login').click()}>Login here</button>
               </p>
             </div>
 
           </div>
-
-          <p className="text-center text-white/30 text-xs mt-6">© 2026 SupaMoto Zambia · Staff Auction System</p>
+          <p className="text-center text-white/25 text-xs mt-5">© 2026 SupaMoto Zambia · Staff Auction System</p>
         </div>
       </div>
     );
@@ -586,7 +676,7 @@ export default function App() {
           <h1 className="text-2xl font-bold mb-3" style={{ color: colors.auburn }}>Auction Closed</h1>
           <p className="text-gray-600 mb-6">This auction has ended. Bidder access is now locked. Please contact the admin if you need help.</p>
           <button
-            onClick={() => { setUser(null); setLoginName(''); setLoginPass(''); }}
+            onClick={() => { setUser(null); setLoginEmail(''); setLoginPass(''); }}
             style={{ backgroundColor: colors.mossGreen }}
             className="w-full text-white font-bold py-3 rounded-xl shadow-md hover:opacity-90 transition-opacity"
           >Back to Login</button>
@@ -598,26 +688,11 @@ export default function App() {
   // =============================================
   // MAIN APP
   // =============================================
-  const filteredItems = items.filter(i => {
-    const name = (i.name || '').toLowerCase();
-    const desc = (i.desc || '').toLowerCase();
-    const query = searchQuery.toLowerCase();
-    const matchesSearch = name.includes(query) || desc.includes(query);
-    const matchesCategory = selectedCategory === 'All' || i.category === selectedCategory;
-    return matchesSearch && matchesCategory;
-  });
-  const groupedItems = filteredItems.reduce((acc, item) => {
-    const cat = item.category || 'Uncategorized';
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(item);
-    return acc;
-  }, {});
-
   return (
     <div style={{ fontFamily: "'Poppins', sans-serif", backgroundColor: colors.cornsilk }} className="min-h-screen text-[#336021] pb-12 overflow-x-hidden">
       <style>{`.hide-scroll::-webkit-scrollbar{display:none}.hide-scroll{-ms-overflow-style:none;scrollbar-width:none}`}</style>
 
-      <Navbar user={user} colors={colors} handleLogout={() => { setUser(null); setLoginName(''); setLoginPass(''); }} />
+      <Navbar user={user} colors={colors} handleLogout={() => { setUser(null); setLoginEmail(''); setLoginPass(''); }} />
       <AlertToast alerts={alerts} colors={colors} />
 
       <main className="max-w-6xl mx-auto px-6 mt-8">
