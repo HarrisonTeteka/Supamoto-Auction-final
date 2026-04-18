@@ -28,13 +28,10 @@ const waitForProfile = async (userId) => {
   return fetchProfileWithRetry(userId, { retries: 8, delayMs: 250 })
 }
 
-// No longer used for session restore — onAuthChange handles everything now.
-// Kept only as a fallback for explicit session checks.
 export const getCurrentUser = async () => {
   const { data } = await supabase.auth.getSession()
   const user = data?.session?.user
   if (!user) return null
-  // Try to get profile for role — fall back to session metadata instantly
   try {
     return await fetchProfileByUserId(user.id)
   } catch {
@@ -57,8 +54,6 @@ export const signIn = async (email, password) => {
     }
     throw new Error(error.message)
   }
-  // Return immediately from auth session — no profiles query on login.
-  // Profile data (name, role) is loaded lazily in the background via onAuthChange.
   const u = data.user
   return {
     id: u.id,
@@ -86,12 +81,8 @@ export const signOut = async () => {
   await supabase.auth.signOut().catch(() => {})
 }
 
-// Single source of truth for auth state.
-// Fires INITIAL_SESSION on mount with the stored session (or null).
-// This replaces getCurrentUser for session restore — no hanging getSession() call.
 export const onAuthChange = (callback) => {
   const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-    // TOKEN_REFRESHED — user is still logged in, profile unchanged, skip
     if (event === 'TOKEN_REFRESHED') return
 
     if (!session?.user) {
@@ -99,17 +90,19 @@ export const onAuthChange = (callback) => {
       return
     }
 
-    try {
-      const profile = await fetchProfileWithRetry(session.user.id)
-      callback(profile)
-    } catch {
-      // Transient error — don't bounce to login
+    const u = session.user
+    // Return minimal profile immediately so UI isn't blocked
+    const minimal = {
+      id: u.id,
+      name: u.user_metadata?.name || u.email,
+      role: u.user_metadata?.role || 'user',
     }
     callback(minimal)
-    // Then try to enrich with DB profile (role) in background
+
+    // Enrich with DB profile (gets correct role) in background
     fetchProfileByUserId(u.id)
       .then((profile) => callback(profile))
-      .catch(() => {/* keep minimal profile */})
+      .catch(() => { /* keep minimal profile */ })
   })
   return () => subscription.unsubscribe()
 }
