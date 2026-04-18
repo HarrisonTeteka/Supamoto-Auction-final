@@ -98,21 +98,12 @@ export const onAuthChange = (callback) => {
       callback(null)
       return
     }
-<<<<<<< HEAD
 
     try {
       const profile = await fetchProfileWithRetry(session.user.id)
       callback(profile)
     } catch {
       // Transient error — don't bounce to login
-=======
-    // Return from session immediately so UI never hangs
-    const u = session.user
-    const minimal = {
-      id: u.id,
-      name: u.user_metadata?.name || u.email,
-      role: u.user_metadata?.role || 'user',
->>>>>>> 6b91759551c4df350f9753d393db24872462c26b
     }
     callback(minimal)
     // Then try to enrich with DB profile (role) in background
