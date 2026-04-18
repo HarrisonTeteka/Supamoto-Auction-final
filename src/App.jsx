@@ -308,26 +308,26 @@ export default function App() {
   };
 
   // --- Place Bid ---
-  const placeBid = async (item) => {
+  const placeBid = async (item, paymentMethod = 'payroll') => {
     if (user?.role !== 'admin' && isAuctionClosed()) return showAlert('The auction has closed. Bidding is locked.', 'error');
     const amt = parseFloat(bidInputs[item.id]);
     if (isNaN(amt) || amt <= 0) return showAlert('Please enter a valid bid amount.', 'error');
     try {
-      await placeBidRpc(item.id, amt);
+      await placeBidRpc(item.id, amt, paymentMethod);
       setBidInputs(prev => ({ ...prev, [item.id]: '' }));
       showAlert(`✅ Bid of K${amt.toLocaleString()} placed!`, 'success');
     } catch (err) { showAlert(err.message || 'Failed to place bid.', 'error'); }
   };
 
   // --- Buy Shop Item ---
-  const buyItem = async (item) => {
+  const buyItem = async (item, paymentMethod = 'payroll') => {
     if (!user) return;
     if (user?.role !== 'admin' && isAuctionClosed()) return showAlert('The auction has closed.', 'error');
     const alreadyBought = (item.purchases || []).some(p => p.buyer === user.name);
     if (alreadyBought) return showAlert('You have already reserved this item.', 'error');
     if (item.stock <= 0) return showAlert('Sorry, this item is out of stock.', 'error');
     try {
-      await buyItemRpc(item.id);
+      await buyItemRpc(item.id, paymentMethod);
       showAlert(`✅ "${item.name}" reserved for K${item.price.toLocaleString()}!`, 'success');
     } catch (err) { showAlert(err.message || 'Purchase failed.', 'error'); }
   };

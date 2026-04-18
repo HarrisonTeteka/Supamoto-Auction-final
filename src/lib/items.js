@@ -35,10 +35,12 @@ const toLegacy = (row) => {
     bids: (row.bids || []).map((b) => ({
       bidder: b.bidder_name,
       amount: b.amount,
+      payment_method: b.payment_method || 'payroll',
       timestamp: b.created_at ? new Date(b.created_at).getTime() : 0,
     })),
     purchases: (row.purchases || []).map((p) => ({
       buyer: p.buyer_name,
+      payment_method: p.payment_method || 'payroll',
       timestamp: p.created_at ? new Date(p.created_at).getTime() : 0,
     })),
   }
@@ -47,7 +49,7 @@ const toLegacy = (row) => {
 const fetchItemWithRelations = async (id) => {
   const { data, error } = await supabase
     .from('items')
-    .select(`*, bids(bidder_name, amount, created_at), purchases(buyer_name, created_at)`)
+    .select(`*, bids(bidder_name, amount, payment_method, created_at), purchases(buyer_name, payment_method, created_at)`)
     .eq('id', id)
     .single()
   if (error) throw error
@@ -57,7 +59,7 @@ const fetchItemWithRelations = async (id) => {
 const fetchAllItems = async () => {
   const { data, error } = await supabase
     .from('items')
-    .select(`*, bids(bidder_name, amount, created_at), purchases(buyer_name, created_at)`)
+    .select(`*, bids(bidder_name, amount, payment_method, created_at), purchases(buyer_name, payment_method, created_at)`)
     .order('created_at', { ascending: false })
   if (error) throw error
   return data.map(toLegacy)
@@ -193,14 +195,21 @@ export const subscribeNotifications = (userName, onNotification) => {
 // ============================================================
 // Mutations
 // ============================================================
-export const placeBid = async (itemId, amount) => {
-  const { data, error } = await supabase.rpc('place_bid', { p_item_id: itemId, p_amount: amount })
+export const placeBid = async (itemId, amount, paymentMethod = 'payroll') => {
+  const { data, error } = await supabase.rpc('place_bid', {
+    p_item_id: itemId,
+    p_amount: amount,
+    p_payment_method: paymentMethod,
+  })
   if (error) throw new Error(error.message)
   return data
 }
 
-export const buyItem = async (itemId) => {
-  const { data, error } = await supabase.rpc('buy_item', { p_item_id: itemId })
+export const buyItem = async (itemId, paymentMethod = 'payroll') => {
+  const { data, error } = await supabase.rpc('buy_item', {
+    p_item_id: itemId,
+    p_payment_method: paymentMethod,
+  })
   if (error) throw new Error(error.message)
   return data
 }

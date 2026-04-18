@@ -1,5 +1,40 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Tag, Flame, XCircle, AlertTriangle, Trophy, History, Edit2, Trash2, Clock } from 'lucide-react';
+
+// Payment method toggle — renders for both auction and shop items
+function PaymentToggle({ value, onChange }) {
+  return (
+    <div className="mb-3">
+      <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Payment Method</p>
+      <div className="flex gap-2">
+        <label className={`flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border-2 cursor-pointer transition-all text-sm font-semibold
+          ${value === 'payroll' ? 'border-green-600 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-50 text-gray-500 hover:border-gray-300'}`}>
+          <input
+            type="radio"
+            name={`payment-${Math.random()}`}
+            value="payroll"
+            checked={value === 'payroll'}
+            onChange={() => onChange('payroll')}
+            className="accent-green-600"
+          />
+          Payroll
+        </label>
+        <label className={`flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border-2 cursor-pointer transition-all text-sm font-semibold
+          ${value === 'mobile_money' ? 'border-orange-500 bg-orange-50 text-orange-600' : 'border-gray-200 bg-gray-50 text-gray-500 hover:border-gray-300'}`}>
+          <input
+            type="radio"
+            name={`payment-${Math.random()}`}
+            value="mobile_money"
+            checked={value === 'mobile_money'}
+            onChange={() => onChange('mobile_money')}
+            className="accent-orange-500"
+          />
+          Mobile Money
+        </label>
+      </div>
+    </div>
+  );
+}
 
 export default function AuctionCard({ item, colors, user, bidInput, onBidChange, onPlaceBid, onBuyItem, onStartEdit, onDelete, onClose, onExpandImage }) {
   if (!item) return null;
@@ -7,9 +42,12 @@ export default function AuctionCard({ item, colors, user, bidInput, onBidChange,
   const hasBids = item.currentBid > 0;
   const minBid = hasBids ? item.currentBid + 1 : item.startPrice;
 
+  // Local payment method state — default payroll
+  const [paymentMethod, setPaymentMethod] = useState('payroll');
+
   return (
     <div className={`flex flex-col bg-white rounded-xl shadow-md overflow-hidden transition-all duration-300 w-[85vw] sm:w-[350px] lg:w-[400px] shrink-0 snap-start ${!isOpen ? 'opacity-75 grayscale-[0.2]' : 'hover:shadow-xl'}`}>
-      
+
       {/* IMAGE SECTION */}
       <div style={{ backgroundColor: isOpen ? colors.tangerine : '#9ca3af' }} className="h-48 flex items-center justify-center text-white relative overflow-hidden group">
         {item.image || item.image2 ? (
@@ -122,25 +160,42 @@ export default function AuctionCard({ item, colors, user, bidInput, onBidChange,
                   ✅ Reserved by you
                 </div>
               ) : (
-                <button
-                  onClick={() => onBuyItem(item)}
-                  disabled={item.stock <= 0}
-                  style={{ backgroundColor: item.stock > 0 ? colors.mossGreen : '#ccc' }}
-                  className="w-full py-2.5 text-white rounded-xl font-bold text-sm hover:opacity-90 transition-opacity disabled:cursor-not-allowed">
-                  {item.stock > 0 ? '🛒 Buy Now' : 'Out of Stock'}
-                </button>
+                <>
+                  <PaymentToggle value={paymentMethod} onChange={setPaymentMethod} />
+                  <button
+                    onClick={() => onBuyItem(item, paymentMethod)}
+                    disabled={item.stock <= 0}
+                    style={{ backgroundColor: item.stock > 0 ? colors.mossGreen : '#ccc' }}
+                    className="w-full py-2.5 text-white rounded-xl font-bold text-sm hover:opacity-90 transition-opacity disabled:cursor-not-allowed">
+                    {item.stock > 0 ? '🛒 Buy Now' : 'Out of Stock'}
+                  </button>
+                </>
               )}
             </div>
           )}
 
           {/* AUCTION ITEM — User Bid Input */}
           {item.type !== 'shop' && user?.role === 'user' && isOpen && (
-            <div className="flex gap-2">
-              <div className="relative flex-grow">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-xs">K</span>
-                <input type="number" placeholder={minBid.toString()} value={bidInput || ''} onChange={(e) => onBidChange(item.id, e.target.value)} className="w-full pl-6 pr-2 py-2 border border-gray-300 rounded-lg outline-none text-sm transition-colors focus:border-orange-400" />
+            <div>
+              <PaymentToggle value={paymentMethod} onChange={setPaymentMethod} />
+              <div className="flex gap-2">
+                <div className="relative flex-grow">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-xs">K</span>
+                  <input
+                    type="number"
+                    placeholder={minBid.toString()}
+                    value={bidInput || ''}
+                    onChange={(e) => onBidChange(item.id, e.target.value)}
+                    className="w-full pl-6 pr-2 py-2 border border-gray-300 rounded-lg outline-none text-sm transition-colors focus:border-orange-400"
+                  />
+                </div>
+                <button
+                  onClick={() => onPlaceBid(item, paymentMethod)}
+                  style={{ backgroundColor: colors.tangerine }}
+                  className="text-white font-semibold px-4 py-2 rounded-lg text-sm shadow-sm hover:opacity-90 transition-opacity">
+                  Bid
+                </button>
               </div>
-              <button onClick={() => onPlaceBid(item)} style={{ backgroundColor: colors.tangerine }} className="text-white font-semibold px-4 py-2 rounded-lg text-sm shadow-sm hover:opacity-90 transition-opacity">Bid</button>
             </div>
           )}
 
