@@ -229,6 +229,7 @@ export default function App() {
   }, [appSettings?.auctionStart, appSettings?.auctionEnd]);
 
   const isAuctionClosed = () => appSettings?.auctionEnd && Date.now() >= appSettings.auctionEnd;
+  const isAuctionStarted = () => appSettings?.auctionStart && Date.now() >= appSettings.auctionStart;
 
   const filteredItems = useMemo(() => items.filter(i => {
     const matchesSearch = (i.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -303,6 +304,7 @@ export default function App() {
 
   // --- Place Bid ---
   const placeBid = async (item, paymentMethod = 'payroll') => {
+    if (user?.role !== 'admin' && !isAuctionStarted()) return showAlert('Bidding opens when the auction starts.', 'error');
     if (user?.role !== 'admin' && isAuctionClosed()) return showAlert('The auction has closed. Bidding is locked.', 'error');
     const amt = parseFloat(bidInputs[item.id]);
     if (isNaN(amt) || amt <= 0) return showAlert('Please enter a valid bid amount.', 'error');
@@ -316,6 +318,7 @@ export default function App() {
   // --- Buy Shop Item ---
   const buyItem = async (item, paymentMethod = 'payroll') => {
     if (!user) return;
+    if (user?.role !== 'admin' && !isAuctionStarted()) return showAlert('Shop opens when the auction starts.', 'error');
     if (user?.role !== 'admin' && isAuctionClosed()) return showAlert('The auction has closed.', 'error');
     const alreadyBought = (item.purchases || []).some(p => p.buyer === user.name);
     if (alreadyBought) return showAlert('You have already reserved this item.', 'error');
@@ -625,6 +628,33 @@ export default function App() {
     );
   }
 
+  // NO SCHEDULE SET — admin hasn't scheduled anything yet
+  if (user?.role !== 'admin' && !appSettings?.auctionStart && !appSettings?.auctionEnd) {
+    return (
+      <div style={{ fontFamily: "'Poppins', sans-serif", backgroundColor: colors.cornsilk }}
+        className="min-h-screen flex items-center justify-center p-6">
+        <AlertToast alerts={alerts} colors={colors} />
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 border-t-8 text-center"
+          style={{ borderColor: colors.mossGreen }}>
+          <div className="flex justify-center mb-4">
+            <div style={{ backgroundColor: colors.mossGreen }} className="p-4 rounded-full shadow-md">
+              <Trophy className="w-10 h-10 text-white" />
+            </div>
+          </div>
+          <h1 className="text-2xl font-bold mb-3" style={{ color: colors.mossGreen }}>
+            Auction Coming Soon
+          </h1>
+          <p className="text-gray-600 mb-6">
+            The auction has not been scheduled yet. Please check back later or contact the admin for more information.
+          </p>
+          <button onClick={handleLogout} style={{ backgroundColor: colors.mossGreen }}
+            className="w-full text-white font-bold py-3 rounded-xl shadow-md hover:opacity-90 transition-opacity">
+            Logout
+          </button>
+        </div>
+      </div>
+    );
+  }
   // AUCTION CLOSED LOCKOUT
   if (user?.role !== 'admin' && isAuctionClosed()) {
     return (
