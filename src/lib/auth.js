@@ -1,9 +1,4 @@
 // src/lib/auth.js
-// Supabase auth with:
-//  - Single fetch per auth event (no duplicate profile lookups)
-//  - onAuthChange skips the INITIAL_SESSION event so it doesn't race initAuth
-//  - Retry on profile fetch so a network hiccup doesn't kick users to login
-
 import { supabase } from './supabase'
 
 const fetchProfileByUserId = async (userId) => {
@@ -16,8 +11,6 @@ const fetchProfileByUserId = async (userId) => {
   return { id: data.id, name: data.name, role: data.role }
 }
 
-// Retry a few times — handles transient network errors without bouncing
-// the user to the login screen on a brief blip.
 const fetchProfileWithRetry = async (userId, { retries = 3, delayMs = 300 } = {}) => {
   let lastErr
   for (let attempt = 0; attempt < retries; attempt++) {
@@ -31,16 +24,14 @@ const fetchProfileWithRetry = async (userId, { retries = 3, delayMs = 300 } = {}
   throw lastErr
 }
 
-// Longer retry specifically for signup, since the handle_new_user trigger
-// needs a moment to write the profile row after auth.users insert.
 const waitForProfile = async (userId) => {
   return fetchProfileWithRetry(userId, { retries: 8, delayMs: 250 })
 }
 
-// Restore user from an existing persisted session. Used on page refresh.
+// No longer used for session restore — onAuthChange handles everything now.
+// Kept only as a fallback for explicit session checks.
 export const getCurrentUser = async () => {
-  const { data, error } = await supabase.auth.getSession()
-  if (error) throw new Error(error.message || 'Could not restore your session.')
+  const { data } = await supabase.auth.getSession()
   const user = data?.session?.user
   if (!user) return null
   return fetchProfileWithRetry(user.id)
@@ -76,36 +67,27 @@ export const signUp = async (name, email, password) => {
 }
 
 export const signOut = async () => {
-  await supabase.auth.signOut()
+  await supabase.auth.signOut().catch(() => {})
 }
 
-// Subscribe to auth state changes — but ONLY to changes triggered after mount
-// (TOKEN_REFRESHED, SIGNED_OUT, manual sign-ins from OTHER tabs).
-// We deliberately skip INITIAL_SESSION because initAuth() in App.jsx handles
-// the initial load. Listening to both would double-fetch and race.
+// Single source of truth for auth state.
+// Fires INITIAL_SESSION on mount with the stored session (or null).
+// This replaces getCurrentUser for session restore — no hanging getSession() call.
 export const onAuthChange = (callback) => {
-  let isInitial = true
   const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-    // Skip the initial session event. App.jsx's initAuth already handles it.
-    if (isInitial && event === 'INITIAL_SESSION') {
-      isInitial = false
-      return
-    }
-    isInitial = false
-
-    // Skip token refresh — the user is still logged in, profile hasn't changed
+    // TOKEN_REFRESHED — user is still logged in, profile unchanged, skip
     if (event === 'TOKEN_REFRESHED') return
 
     if (!session?.user) {
       callback(null)
       return
     }
+
     try {
       const profile = await fetchProfileWithRetry(session.user.id)
       callback(profile)
     } catch {
-      // Don't bounce user to login on a transient error
-      // (keeps them logged in; they can try again)
+      // Transient error — don't bounce to login
     }
   })
   return () => subscription.unsubscribe()
