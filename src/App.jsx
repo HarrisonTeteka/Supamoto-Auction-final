@@ -1,5 +1,5 @@
 import React, { useState, useEffect, lazy, Suspense, useMemo } from 'react';
-import { Flame, User, Trophy, Shield, Lock, Search, XCircle, Tag, ChevronLeft, ChevronRight, AlertTriangle, UserPlus } from 'lucide-react';
+import { Flame, User, Trophy, Shield, Lock, Search, XCircle, Tag, ChevronLeft, ChevronRight, UserPlus } from 'lucide-react';
 import logo from './assets/logo.webp';
 
 // ── Supabase auth ─────────────────────────────────────────────────────────────
@@ -95,9 +95,6 @@ export default function App() {
   const [imagePreview, setImagePreview]     = useState(null);
   const [imagePreview2, setImagePreview2]   = useState(null);
   const [editingItemId, setEditingItemId]   = useState(null);
-  const [showTerms, setShowTerms]           = useState(false);
-  const [termsAccepted, setTermsAccepted]   = useState(false);
-  const [pendingUser, setPendingUser]       = useState(null);
   const [timeLeft, setTimeLeft]             = useState('');
   const [auctionStartInput, setAuctionStartInput] = useState('');
   const [auctionEndInput, setAuctionEndInput]     = useState('');
@@ -288,18 +285,15 @@ export default function App() {
     const name = `${firstName} ${lastName}`;
     const existing = dbUsers.find(u => u.name.toLowerCase() === name.toLowerCase());
     if (existing) return showAlert('That name is already registered. Please contact admin.', 'error');
-    setPendingUser({ name, email, password: pass });
-    setShowTerms(true);
+    completeRegistration({ name, email, password: pass });
   };
 
-  const completeRegistration = async () => {
-    if (!termsAccepted || !pendingUser) return;
+  const completeRegistration = async ({ name, email, password }) => {
     setRegLoading(true);
     try {
-      const profile = await signUp(pendingUser.name, pendingUser.email, pendingUser.password);
+      const profile = await signUp(name, email, password);
       setUser(profile);
-      showAlert(`Account created! Welcome, ${pendingUser.name.split(' ')[0]}! 🎉`, 'success');
-      setShowTerms(false); setTermsAccepted(false); setPendingUser(null);
+      showAlert(`Account created! Welcome, ${name.split(' ')[0]}! 🎉`, 'success');
       setRegFirstName(''); setRegLastName(''); setRegEmail(''); setRegPass(''); setRegPassConfirm('');
     } catch (err) {
       showAlert(err.message || 'Error creating account. Please try again.', 'error');
@@ -443,37 +437,6 @@ export default function App() {
     return (
       <div style={{ fontFamily: "'Poppins', sans-serif", ...bgStyle }} className="min-h-screen flex items-center justify-center p-4">
         <AlertToast alerts={alerts} colors={colors} />
-
-        {/* Terms Modal */}
-        {showTerms && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-            <div className="bg-white rounded-2xl p-6 max-w-md w-full border-t-8 shadow-2xl" style={{ borderColor: colors.mossGreen }}>
-              <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-800">
-                <AlertTriangle className="text-orange-500 w-6 h-6" /> Auction Terms & Conditions
-              </h2>
-              <div className="bg-orange-50 rounded-lg p-4 border border-orange-100 mb-5">
-                <p className="text-sm font-medium leading-relaxed text-gray-700">
-                  These terms have been established by management. By proceeding, you acknowledge that all bids placed are <strong>binding and final</strong>. Winning bids will be subject to payroll deductions as per management policy.
-                </p>
-              </div>
-              <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer mb-6 border border-gray-200 hover:bg-gray-100 transition-colors">
-                <input type="checkbox" checked={termsAccepted} onChange={e => setTermsAccepted(e.target.checked)} className="mt-0.5 w-5 h-5 cursor-pointer accent-green-700" />
-                <span className="text-sm font-semibold text-gray-700">I have read and agree to the auction terms.</span>
-              </label>
-              <div className="flex gap-3">
-                <button onClick={() => { setShowTerms(false); setPendingUser(null); setTermsAccepted(false); }}
-                  className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300 transition-colors">Cancel</button>
-                <button onClick={completeRegistration} disabled={!termsAccepted || regLoading}
-                  style={{ backgroundColor: colors.mossGreen }}
-                  className={`flex-1 py-3 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${(!termsAccepted || regLoading) ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}>
-                  {regLoading
-                    ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> Creating…</>
-                    : 'Confirm & Join'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         <div className="w-full max-w-md">
           {/* Header */}
