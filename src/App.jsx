@@ -2,7 +2,7 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, setDoc, runTransaction } from 'firebase/firestore';
-import { User, Trophy, Shield, Lock, Search, XCircle, Tag, ChevronLeft, ChevronRight, AlertTriangle, UserPlus } from 'lucide-react';
+import { Flame, User, Trophy, Shield, Lock, Search, XCircle, Tag, ChevronLeft, ChevronRight, AlertTriangle, UserPlus } from 'lucide-react';
 import logo from './assets/logo.webp';
 
 import Navbar from './components/Navbar';
@@ -27,37 +27,77 @@ const db = getFirestore(app);
 const appId = 'supamoto-auction-2026';
 
 // --- Web Crypto password hashing (non-blocking) ---
+const PBKDF2_ITERATIONS = 10000;
+
 const hashPassword = async (password) => {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
   const hashBits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
     keyMaterial, 256
   );
-  return JSON.stringify({ salt: Array.from(salt), hash: Array.from(new Uint8Array(hashBits)) });
+  return JSON.stringify({ salt: Array.from(salt), hash: Array.from(new Uint8Array(hashBits)), iterations: PBKDF2_ITERATIONS });
 };
 
 const verifyPassword = async (password, stored) => {
   try {
-    const { salt, hash } = JSON.parse(stored);
+    const parsed = JSON.parse(stored);
+    const { salt, hash } = parsed;
+    // Support both old (100000) and new (10000) hashes
+    const iterations = parsed.iterations || 100000;
     const enc = new TextEncoder();
     const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
     const hashBits = await crypto.subtle.deriveBits(
-      { name: 'PBKDF2', salt: new Uint8Array(salt), iterations: 100000, hash: 'SHA-256' },
+      { name: 'PBKDF2', salt: new Uint8Array(salt), iterations, hash: 'SHA-256' },
       keyMaterial, 256
     );
     return JSON.stringify(Array.from(new Uint8Array(hashBits))) === JSON.stringify(hash);
   } catch { return false; }
 };
 
+
+// --- Error Boundary for Admin Panel ---
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error('AdminPanel crashed:', error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-8 mb-6 text-center">
+          <p className="text-red-700 font-bold text-lg mb-2">⚠️ Admin Panel Error</p>
+          <p className="text-red-500 text-sm mb-4">{this.state.error?.message || 'Something went wrong loading the admin panel.'}</p>
+          <button onClick={() => this.setState({ hasError: false, error: null })}
+            className="bg-red-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-red-700 transition-all">
+            Try Again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // --- Timer helper (outside component) ---
 const calculateTimeLeft = (start, end) => {
-  if (!end) return null;
+  if (!start || !end) return null;
   const now = Date.now();
-  if (start && now < start) return 'NOT STARTED';
+
+  // Auction hasn't started yet — count down to start
+  if (now < start) {
+    const diff = start - now;
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    const s = Math.floor((diff % 60000) / 1000);
+    return `⏳ Starts in ${String(h).padStart(2,'0')}h ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`;
+  }
+
+  // Auction has ended
+  if (now >= end) return 'AUCTION CLOSED';
+
+  // Auction is live — count down to end
   const diff = end - now;
-  if (diff <= 0) return 'AUCTION CLOSED';
   const h = Math.floor(diff / 3600000);
   const m = Math.floor((diff % 3600000) / 60000);
   const s = Math.floor((diff % 60000) / 1000);
@@ -171,6 +211,7 @@ export default function App() {
     const pass = loginPass.trim();
     if (!name || !pass) return showAlert('Please enter your name and password.', 'error');
     setLoginLoading(true);
+    await new Promise(r => setTimeout(r, 50)); // yield to browser before heavy crypto
     const existing = dbUsers.find(u => u.name.toLowerCase() === name.toLowerCase());
     if (!existing) {
       showAlert('Account not found. Please create one below.', 'error');
@@ -203,6 +244,7 @@ export default function App() {
   const completeRegistration = async () => {
     if (!termsAccepted || !pendingUser) return;
     setRegLoading(true);
+    await new Promise(r => setTimeout(r, 50)); // yield to browser before heavy crypto
     try {
       const hashedPassword = await hashPassword(pendingUser.password);
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'users'), {
@@ -581,6 +623,7 @@ export default function App() {
       <main className="max-w-6xl mx-auto px-6 mt-8">
 
         {user.role === 'admin' && (
+          <ErrorBoundary>
           <Suspense fallback={<div className="p-8 text-center text-gray-500 font-bold animate-pulse">Loading Admin Tools...</div>}>
             <AdminPanel
               items={items} dbUsers={dbUsers} db={db} appId={appId} doc={doc} setDoc={setDoc}
@@ -597,6 +640,7 @@ export default function App() {
               auctionEndInput={auctionEndInput} setAuctionEndInput={setAuctionEndInput}
             />
           </Suspense>
+          </ErrorBoundary>
         )}
 
         {user.role === 'user' && (

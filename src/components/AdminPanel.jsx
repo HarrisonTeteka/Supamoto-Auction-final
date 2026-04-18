@@ -17,21 +17,30 @@ export default function AdminPanel({
 
   // --- Export Winners CSV ---
   const exportWinnersCSV = () => {
-    const winners = items.filter(item => item.status === 'closed' && item.topBidder);
-    if (!winners.length) return showAlert?.("No closed auction winners to export yet.", "error");
-    let csvContent = "Item Name,Category,Winner Name,Final Price (K),Status\n";
-    winners.forEach(item => {
-      const itemName = (item.name || "Unnamed").replace(/,/g, "");
+    const bidWinners = items.filter(item => item.topBidder);
+    const shopItems  = items.filter(item => item.type === 'shop' && item.purchases?.length > 0);
+    if (!bidWinners.length && !shopItems.length) return showAlert?.("No auction data to export yet.", "error");
+
+    let csvContent = "Type,Item Name,Category,Person,Amount (K)\n";
+    bidWinners.forEach(item => {
+      const name   = (item.name || "Unnamed").replace(/,/g, "");
       const winner = (item.topBidder || "").replace(/,/g, "");
-      const price = item.currentBid || 0;
-      const status = item.status || "closed";
-      csvContent += `"${itemName}","${item.category}","${winner}",${price},"${status}"\n`;
+      const price  = item.currentBid || 0;
+      csvContent += `"Bid Winner","${name}","${item.category || ''}","${winner}",${price}\n`;
     });
+    shopItems.forEach(item => {
+      const name = (item.name || "Unnamed").replace(/,/g, "");
+      (item.purchases || []).forEach(p => {
+        const buyer = (p.buyer || "").replace(/,/g, "");
+        csvContent += `"Fixed Price","${name}","${item.category || ''}","${buyer}",${item.price || 0}\n`;
+      });
+    });
+
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
+    const url  = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `SupaMoto_Auction_Winners_${new Date().toISOString().slice(0,10)}.csv`);
+    link.setAttribute("download", `SupaMoto_Auction_Results_${new Date().toISOString().slice(0,10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -40,14 +49,21 @@ export default function AdminPanel({
   // --- Save Auction Schedule ---
   const saveAuctionSchedule = async (e) => {
     e.preventDefault();
-    if (!auctionStartInput || !auctionEndInput) return showAlert?.('Please set both start and end times.', 'error');
-    const startTs = new Date(auctionStartInput).getTime();
-    const endTs = new Date(auctionEndInput).getTime();
-    if (endTs <= startTs) return showAlert?.('End time must be after start time.', 'error');
+    if (!auctionStartInput || !auctionEndInput)
+      return showAlert?.('Please set both start and end times.', 'error');
+
+    // Fix: append :00 seconds so Date parsing is consistent across all browsers (Safari etc.)
+    const startTs = new Date(auctionStartInput + ':00').getTime();
+    const endTs   = new Date(auctionEndInput   + ':00').getTime();
+
+    if (isNaN(startTs) || isNaN(endTs))
+      return showAlert?.('Invalid date/time. Please re-select.', 'error');
+    if (endTs <= startTs)
+      return showAlert?.('End time must be after start time.', 'error');
     try {
       const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'general');
       await setDoc(settingsRef, { auctionStart: startTs, auctionEnd: endTs }, { merge: true });
-      showAlert?.('Auction schedule saved!', 'success');
+      showAlert?.('Auction schedule saved! ✅', 'success');
     } catch (err) {
       showAlert?.('Failed to save schedule.', 'error');
       console.error(err);
@@ -91,13 +107,13 @@ export default function AdminPanel({
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 text-center">
           <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Winners</p>
           <p className="text-3xl font-black text-yellow-600">
-            {items.filter(i => i.status === 'closed' && i.topBidder).length}
+            {items.filter(i => i.topBidder).length}
           </p>
         </div>
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 text-center">
           <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">Revenue (K)</p>
           <p className="text-3xl font-black text-orange-600">
-            {items.filter(i => i.status === 'closed').reduce((sum, i) => sum + (Number(i.currentBid) || 0), 0).toLocaleString()}
+            {items.filter(i => i.topBidder).reduce((sum, i) => sum + (Number(i.currentBid) || 0), 0).toLocaleString()}
           </p>
         </div>
       </section>
@@ -170,7 +186,7 @@ export default function AdminPanel({
           <h3 className="font-bold text-gray-700 flex items-center gap-2">
             🏆 Winners
             <span className="bg-yellow-100 text-yellow-700 text-xs font-semibold px-2 py-0.5 rounded-full">
-              {items.filter(i => i.status === 'closed' && i.topBidder).length}
+              {items.filter(i => i.topBidder).length}
             </span>
           </h3>
           <button onClick={exportWinnersCSV} className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-lg text-white transition-all" style={{ backgroundColor: colors.mossGreen }}>
@@ -188,10 +204,10 @@ export default function AdminPanel({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {items.filter(i => i.status === 'closed' && i.topBidder).length === 0 ? (
+              {items.filter(i => i.topBidder).length === 0 ? (
                 <tr><td colSpan={4} className="text-center py-12 text-gray-400">No auction winners yet</td></tr>
               ) : (
-                items.filter(i => i.status === 'closed' && i.topBidder).map((item, idx) => (
+                items.filter(i => i.topBidder).map((item, idx) => (
                   <tr key={item.id || idx} className="hover:bg-gray-50 transition-colors">
                     <td className="px-5 py-3 text-gray-400 font-medium">{idx + 1}</td>
                     <td className="px-5 py-3">
@@ -212,17 +228,55 @@ export default function AdminPanel({
         </div>
       </section>
 
-      {/* --- EXPORT SECTION --- */}
-      <section className="bg-white rounded-xl shadow-md p-6 mb-8 border-l-8 border-green-600 flex flex-col md:flex-row justify-between items-center gap-4">
-        <div>
-          <h2 className="text-xl font-bold flex items-center gap-2" style={{ color: colors.mossGreen }}>
-            <Trophy className="w-5 h-5 text-orange-500" /> HR Winner Reports
-          </h2>
-          <p className="text-sm text-gray-500">Download the final list for HR payroll processing.</p>
+
+
+      {/* --- FIXED PRICE PURCHASES TABLE --- */}
+      <section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h3 className="font-bold text-gray-700 flex items-center gap-2">
+            🛒 Fixed Price Purchases
+            <span className="bg-blue-100 text-blue-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+              {items.filter(i => i.type === 'shop' && i.purchases?.length > 0).reduce((sum, i) => sum + (i.purchases?.length || 0), 0)}
+            </span>
+          </h3>
         </div>
-        <button onClick={exportWinnersCSV} className="w-full md:w-auto bg-green-700 text-white px-6 py-3 rounded-xl font-bold hover:bg-green-800 transition-all flex items-center justify-center gap-2 shadow-lg">
-          <Download className="w-5 h-5" /> Download CSV for HR
-        </button>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-100">
+              <tr>
+                <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">#</th>
+                <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Buyer</th>
+                <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Item</th>
+                <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Price</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {items.filter(i => i.type === 'shop' && i.purchases?.length > 0).flatMap(item =>
+                (item.purchases || []).map((p, pi) => ({ ...p, itemName: item.name, price: item.price, category: item.category, key: item.id + '-' + pi }))
+              ).length === 0 ? (
+                <tr><td colSpan={4} className="text-center py-12 text-gray-400">No fixed price purchases yet</td></tr>
+              ) : (
+                items.filter(i => i.type === 'shop' && i.purchases?.length > 0).flatMap(item =>
+                  (item.purchases || []).map((p, pi) => ({ ...p, itemName: item.name, price: item.price, key: item.id + '-' + pi }))
+                ).map((row, idx) => (
+                  <tr key={row.key} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-5 py-3 text-gray-400 font-medium">{idx + 1}</td>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white bg-blue-500">
+                          {(row.buyer || '?').charAt(0).toUpperCase()}
+                        </div>
+                        <span className="font-medium text-gray-800">{row.buyer || 'Unknown'}</span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-3 text-gray-600">{row.itemName}</td>
+                    <td className="px-5 py-3 font-bold text-blue-700">K{(Number(row.price) || 0).toLocaleString()}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {/* --- AUCTION SCHEDULE SECTION --- */}
