@@ -43,7 +43,16 @@ export const getCurrentUser = async () => {
   if (error) throw new Error(error.message || 'Could not restore your session.')
   const user = data?.session?.user
   if (!user) return null
-  return fetchProfileWithRetry(user.id)
+  // Try to get profile for role — fall back to session metadata instantly
+  try {
+    return await fetchProfileByUserId(user.id)
+  } catch {
+    return {
+      id: user.id,
+      name: user.user_metadata?.name || user.email,
+      role: user.user_metadata?.role || 'user',
+    }
+  }
 }
 
 export const signIn = async (email, password) => {
@@ -57,7 +66,14 @@ export const signIn = async (email, password) => {
     }
     throw new Error(error.message)
   }
-  return fetchProfileWithRetry(data.user.id)
+  // Return immediately from auth session — no profiles query on login.
+  // Profile data (name, role) is loaded lazily in the background via onAuthChange.
+  const u = data.user
+  return {
+    id: u.id,
+    name: u.user_metadata?.name || u.email,
+    role: u.user_metadata?.role || 'user',
+  }
 }
 
 export const signUp = async (name, email, password) => {
@@ -100,13 +116,18 @@ export const onAuthChange = (callback) => {
       callback(null)
       return
     }
-    try {
-      const profile = await fetchProfileWithRetry(session.user.id)
-      callback(profile)
-    } catch {
-      // Don't bounce user to login on a transient error
-      // (keeps them logged in; they can try again)
+    // Return from session immediately so UI never hangs
+    const u = session.user
+    const minimal = {
+      id: u.id,
+      name: u.user_metadata?.name || u.email,
+      role: u.user_metadata?.role || 'user',
     }
+    callback(minimal)
+    // Then try to enrich with DB profile (role) in background
+    fetchProfileByUserId(u.id)
+      .then((profile) => callback(profile))
+      .catch(() => {/* keep minimal profile */})
   })
   return () => subscription.unsubscribe()
 }
