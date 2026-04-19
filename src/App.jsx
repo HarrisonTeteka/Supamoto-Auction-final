@@ -1,5 +1,5 @@
 import React, { useState, useEffect, lazy, Suspense, useMemo } from 'react';
-import { Flame, User, Trophy, Shield, Lock, Search, XCircle, Tag, ChevronLeft, ChevronRight, UserPlus } from 'lucide-react';
+import { Flame, User, Trophy, Shield, Lock, Search, XCircle, Tag, ChevronLeft, ChevronRight, AlertTriangle, UserPlus } from 'lucide-react';
 import logo from './assets/logo.webp';
 
 // ── Supabase auth ─────────────────────────────────────────────────────────────
@@ -76,42 +76,44 @@ const calculateTimeLeft = (start, end) => {
 export default function App() {
   const colors = { tangerine: '#F58202', mossGreen: '#336021', auburn: '#9E2A2B', cornsilk: '#F9EDCC' };
 
-  const [authLoading, setAuthLoading]           = useState(true);
-  const [settingsLoading, setSettingsLoading]   = useState(true); // ← fix: wait for settings before showing "Coming Soon"
-  const [user, setUser]                         = useState(null);
-  const [currentPage, setCurrentPage]           = useState('auction');
-  const [dbUsers, setDbUsers]                   = useState([]);
-  const [items, setItems]                       = useState([]);
-  const [alerts, setAlerts]                     = useState([]);
-  const [bidInputs, setBidInputs]               = useState({});
-  const [searchQuery, setSearchQuery]           = useState('');
+  const [authLoading, setAuthLoading]       = useState(true);
+  const [user, setUser]                     = useState(null);
+  const [currentPage, setCurrentPage]       = useState('auction');
+  const [dbUsers, setDbUsers]               = useState([]);
+  const [items, setItems]                   = useState([]);
+  const [alerts, setAlerts]                 = useState([]);
+  const [bidInputs, setBidInputs]           = useState({});
+  const [searchQuery, setSearchQuery]       = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  const [expandedImage, setExpandedImage]       = useState(null);
-  const [appSettings, setAppSettings]           = useState({ loginBg: null });
-  const [bgPreview, setBgPreview]               = useState(null);
-  const [categories, setCategories]             = useState(['Cookstoves', 'Fuel', 'Solar', 'General']);
+  const [expandedImage, setExpandedImage]   = useState(null);
+  const [appSettings, setAppSettings]       = useState({ loginBg: null });
+  const [bgPreview, setBgPreview]           = useState(null);
+  const [categories, setCategories]         = useState(['Cookstoves', 'Fuel', 'Solar', 'General']);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [newCategoryName, setNewCategoryName]   = useState('');
-  const [newItem, setNewItem]                   = useState({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' });
-  const [imagePreview, setImagePreview]         = useState(null);
-  const [imagePreview2, setImagePreview2]       = useState(null);
-  const [editingItemId, setEditingItemId]       = useState(null);
-  const [timeLeft, setTimeLeft]                 = useState('');
+  const [newItem, setNewItem]               = useState({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' });
+  const [imagePreview, setImagePreview]     = useState(null);
+  const [imagePreview2, setImagePreview2]   = useState(null);
+  const [editingItemId, setEditingItemId]   = useState(null);
+  const [showTerms, setShowTerms]           = useState(false);
+  const [termsAccepted, setTermsAccepted]   = useState(false);
+  const [pendingUser, setPendingUser]       = useState(null);
+  const [timeLeft, setTimeLeft]             = useState('');
   const [auctionStartInput, setAuctionStartInput] = useState('');
   const [auctionEndInput, setAuctionEndInput]     = useState('');
 
   // Login state
-  const [loginEmail, setLoginEmail]     = useState('');
-  const [loginPass, setLoginPass]       = useState('');
-  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginEmail, setLoginEmail]         = useState('');
+  const [loginPass, setLoginPass]           = useState('');
+  const [loginLoading, setLoginLoading]     = useState(false);
 
-  // Register state
-  const [regFirstName, setRegFirstName]       = useState('');
-  const [regLastName, setRegLastName]         = useState('');
-  const [regEmail, setRegEmail]               = useState('');
-  const [regPass, setRegPass]                 = useState('');
-  const [regPassConfirm, setRegPassConfirm]   = useState('');
-  const [regLoading, setRegLoading]           = useState(false);
+  // Register state — split first/last like original
+  const [regFirstName, setRegFirstName]     = useState('');
+  const [regLastName, setRegLastName]       = useState('');
+  const [regEmail, setRegEmail]             = useState('');
+  const [regPass, setRegPass]               = useState('');
+  const [regPassConfirm, setRegPassConfirm] = useState('');
+  const [regLoading, setRegLoading]         = useState(false);
 
   // --- App start ---
   useEffect(() => {
@@ -133,21 +135,15 @@ export default function App() {
       if (mounted && data) setDbUsers(data);
     };
 
-    // Settings are public — subscribe immediately, mark loaded once data arrives
+    // Settings are public (RLS allows anon read), so we can subscribe immediately
     const unsubSettings = subscribeToSettings((data) => {
-      if (mounted) {
-        if (data) setAppSettings(data);
-        setSettingsLoading(false); // ← mark settings as loaded regardless of value
-      }
+      if (mounted && data) setAppSettings(data);
     });
 
-    // Safety timeout for settings — if Supabase takes too long, stop blocking
-    const settingsTimeout = setTimeout(() => {
-      if (mounted) setSettingsLoading(false);
-    }, 5000);
-
+    // Auth-gated work: fetch items, load users, and set up realtime items
+    // subscription AFTER we know who the user is. This prevents the RLS race
+    // that caused items to appear empty on load.
     let unsubItems = () => {};
-    let currentUserId = null;
 
     const initAuth = async () => {
       try {
@@ -166,14 +162,19 @@ export default function App() {
         if (mounted) setAuthLoading(false);
       }
     };
-
+    // Hard timeout — if auth takes >6s, stop spinner regardless
     const authTimeout = setTimeout(() => { if (mounted) setAuthLoading(false); }, 6000);
     initAuth().finally(() => clearTimeout(authTimeout));
 
+    // Handles sign-in / sign-out AFTER mount. Skips INITIAL_SESSION internally
+    // so it doesn't race initAuth.
+    // Guard: only re-run setup if auth state actually changes (prevents loop
+    // when onAuthChange fires after initAuth already set the user).
+    let currentUserId = null;
     const unsubAuth = onAuthChange((profile) => {
       if (!mounted) return;
       const incomingId = profile?.id ?? null;
-      if (incomingId === currentUserId) return;
+      if (incomingId === currentUserId) return; // no change — skip
       currentUserId = incomingId;
       setUser(profile);
       if (profile) {
@@ -191,7 +192,6 @@ export default function App() {
     return () => {
       mounted = false;
       clearTimeout(authTimeout);
-      clearTimeout(settingsTimeout);
       document.head.removeChild(link);
       unsubAuth();
       unsubItems();
@@ -231,8 +231,7 @@ export default function App() {
     return () => clearInterval(t);
   }, [appSettings?.auctionStart, appSettings?.auctionEnd]);
 
-  const isAuctionClosed  = () => appSettings?.auctionEnd   && Date.now() >= appSettings.auctionEnd;
-  const isAuctionStarted = () => appSettings?.auctionStart && Date.now() >= appSettings.auctionStart;
+  const isAuctionClosed = () => appSettings?.auctionEnd && Date.now() >= appSettings.auctionEnd;
 
   const filteredItems = useMemo(() => items.filter(i => {
     const matchesSearch = (i.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -264,6 +263,8 @@ export default function App() {
     try {
       const profile = await signIn(email, pass);
       setUser(profile);
+      // Kick off items fetch immediately so user sees content without waiting
+      // for onAuthChange round-trip.
       fetchItems().then(setItems).catch(console.error);
       showAlert(`Welcome back, ${profile.name}! 👋`, 'success');
     } catch (err) {
@@ -287,11 +288,18 @@ export default function App() {
     const name = `${firstName} ${lastName}`;
     const existing = dbUsers.find(u => u.name.toLowerCase() === name.toLowerCase());
     if (existing) return showAlert('That name is already registered. Please contact admin.', 'error');
+    setPendingUser({ name, email, password: pass });
+    setShowTerms(true);
+  };
+
+  const completeRegistration = async () => {
+    if (!termsAccepted || !pendingUser) return;
     setRegLoading(true);
     try {
-      const profile = await signUp(name, email, pass);
+      const profile = await signUp(pendingUser.name, pendingUser.email, pendingUser.password);
       setUser(profile);
-      showAlert(`Account created! Welcome, ${firstName}! 🎉`, 'success');
+      showAlert(`Account created! Welcome, ${pendingUser.name.split(' ')[0]}! 🎉`, 'success');
+      setShowTerms(false); setTermsAccepted(false); setPendingUser(null);
       setRegFirstName(''); setRegLastName(''); setRegEmail(''); setRegPass(''); setRegPassConfirm('');
     } catch (err) {
       showAlert(err.message || 'Error creating account. Please try again.', 'error');
@@ -300,28 +308,26 @@ export default function App() {
   };
 
   // --- Place Bid ---
-  const placeBid = async (item, paymentMethod = 'payroll') => {
-    if (user?.role !== 'admin' && !isAuctionStarted()) return showAlert('Bidding opens when the auction starts.', 'error');
+  const placeBid = async (item) => {
     if (user?.role !== 'admin' && isAuctionClosed()) return showAlert('The auction has closed. Bidding is locked.', 'error');
     const amt = parseFloat(bidInputs[item.id]);
     if (isNaN(amt) || amt <= 0) return showAlert('Please enter a valid bid amount.', 'error');
     try {
-      await placeBidRpc(item.id, amt, paymentMethod);
+      await placeBidRpc(item.id, amt);
       setBidInputs(prev => ({ ...prev, [item.id]: '' }));
       showAlert(`✅ Bid of K${amt.toLocaleString()} placed!`, 'success');
     } catch (err) { showAlert(err.message || 'Failed to place bid.', 'error'); }
   };
 
   // --- Buy Shop Item ---
-  const buyItem = async (item, paymentMethod = 'payroll') => {
+  const buyItem = async (item) => {
     if (!user) return;
-    if (user?.role !== 'admin' && !isAuctionStarted()) return showAlert('Shop opens when the auction starts.', 'error');
     if (user?.role !== 'admin' && isAuctionClosed()) return showAlert('The auction has closed.', 'error');
     const alreadyBought = (item.purchases || []).some(p => p.buyer === user.name);
     if (alreadyBought) return showAlert('You have already reserved this item.', 'error');
     if (item.stock <= 0) return showAlert('Sorry, this item is out of stock.', 'error');
     try {
-      await buyItemRpc(item.id, paymentMethod);
+      await buyItemRpc(item.id);
       showAlert(`✅ "${item.name}" reserved for K${item.price.toLocaleString()}!`, 'success');
     } catch (err) { showAlert(err.message || 'Purchase failed.', 'error'); }
   };
@@ -361,6 +367,7 @@ export default function App() {
   const handleBgUpload = (e) => {
     const file = e.target.files[0];
     if (!file || file.size > 500 * 1024) return showAlert('Background max 500KB.', 'error');
+    // Keep the File for upload on save, and a preview URL for immediate display
     const previewUrl = URL.createObjectURL(file);
     setBgPreview({ file, preview: previewUrl });
   };
@@ -412,7 +419,7 @@ export default function App() {
     setUser(null); setLoginEmail(''); setLoginPass(''); setCurrentPage('auction');
   };
 
-  // ── Loading screen (auth OR settings still loading) ───────────────────────
+  // ── Loading screen ────────────────────────────────────────────────────────
   if (authLoading) {
     return (
       <div style={{ background: 'linear-gradient(135deg, #336021 0%, #1a3a10 50%, #9E2A2B 100%)' }}
@@ -437,6 +444,37 @@ export default function App() {
       <div style={{ fontFamily: "'Poppins', sans-serif", ...bgStyle }} className="min-h-screen flex items-center justify-center p-4">
         <AlertToast alerts={alerts} colors={colors} />
 
+        {/* Terms Modal */}
+        {showTerms && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl p-6 max-w-md w-full border-t-8 shadow-2xl" style={{ borderColor: colors.mossGreen }}>
+              <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-800">
+                <AlertTriangle className="text-orange-500 w-6 h-6" /> Auction Terms & Conditions
+              </h2>
+              <div className="bg-orange-50 rounded-lg p-4 border border-orange-100 mb-5">
+                <p className="text-sm font-medium leading-relaxed text-gray-700">
+                  These terms have been established by management. By proceeding, you acknowledge that all bids placed are <strong>binding and final</strong>. Winning bids will be subject to payroll deductions as per management policy.
+                </p>
+              </div>
+              <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer mb-6 border border-gray-200 hover:bg-gray-100 transition-colors">
+                <input type="checkbox" checked={termsAccepted} onChange={e => setTermsAccepted(e.target.checked)} className="mt-0.5 w-5 h-5 cursor-pointer accent-green-700" />
+                <span className="text-sm font-semibold text-gray-700">I have read and agree to the auction terms.</span>
+              </label>
+              <div className="flex gap-3">
+                <button onClick={() => { setShowTerms(false); setPendingUser(null); setTermsAccepted(false); }}
+                  className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold hover:bg-gray-300 transition-colors">Cancel</button>
+                <button onClick={completeRegistration} disabled={!termsAccepted || regLoading}
+                  style={{ backgroundColor: colors.mossGreen }}
+                  className={`flex-1 py-3 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${(!termsAccepted || regLoading) ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}>
+                  {regLoading
+                    ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> Creating…</>
+                    : 'Confirm & Join'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="w-full max-w-md">
           {/* Header */}
           <div className="text-center mb-6">
@@ -451,6 +489,7 @@ export default function App() {
 
           {/* Card */}
           <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
+
             {/* Tab switcher */}
             <div className="flex">
               <button id="tab-login"
@@ -485,7 +524,7 @@ export default function App() {
               </button>
             </div>
 
-            {/* LOGIN PANEL */}
+            {/* ── LOGIN PANEL ── */}
             <div id="panel-login" className="p-7">
               <p className="text-gray-500 text-sm mb-5 text-center">Welcome back! Enter your details to access the auction.</p>
               <form onSubmit={handleLogin} className="space-y-4">
@@ -509,6 +548,8 @@ export default function App() {
                       className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:border-transparent transition-all bg-gray-50 focus:bg-white" />
                   </div>
                 </div>
+
+                {/* Acknowledgement checkbox */}
                 <div className="rounded-xl border border-orange-200 bg-orange-50 p-3">
                   <label className="flex items-start gap-3 cursor-pointer">
                     <input type="checkbox" required className="mt-0.5 w-4 h-4 cursor-pointer accent-green-700 shrink-0" />
@@ -517,6 +558,7 @@ export default function App() {
                     </span>
                   </label>
                 </div>
+
                 <button type="submit" disabled={loginLoading} style={{ backgroundColor: colors.mossGreen }}
                   className="w-full py-3.5 text-white font-bold rounded-xl shadow-md hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2">
                   {loginLoading
@@ -531,10 +573,12 @@ export default function App() {
               </p>
             </div>
 
-            {/* REGISTER PANEL */}
+            {/* ── REGISTER PANEL ── */}
             <div id="panel-register" className="p-7" style={{ display: 'none' }}>
               <p className="text-gray-500 text-sm mb-5 text-center">First time? Create your account to start bidding.</p>
               <form onSubmit={handleRegister} className="space-y-3">
+
+                {/* First + Last Name */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">First Name</label>
@@ -555,6 +599,8 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+
+                {/* Company Email */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Company Email</label>
                   <div className="relative">
@@ -566,6 +612,8 @@ export default function App() {
                       className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 transition-all bg-gray-50 focus:bg-white" />
                   </div>
                 </div>
+
+                {/* Password */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Password</label>
                   <div className="relative">
@@ -575,6 +623,8 @@ export default function App() {
                       className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 transition-all bg-gray-50 focus:bg-white" />
                   </div>
                 </div>
+
+                {/* Re-enter Password */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Re-enter Password</label>
                   <div className="relative">
@@ -590,6 +640,7 @@ export default function App() {
                   {regPassConfirm && regPassConfirm !== regPass && <p className="text-xs text-red-500 mt-1 font-medium">Passwords do not match</p>}
                   {regPassConfirm && regPassConfirm === regPass  && <p className="text-xs text-green-600 mt-1 font-medium">✓ Passwords match</p>}
                 </div>
+
                 <button type="submit" disabled={regLoading} style={{ backgroundColor: colors.tangerine }}
                   className="w-full py-3.5 text-white font-bold rounded-xl shadow-md hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2 mt-1">
                   {regLoading
@@ -603,6 +654,7 @@ export default function App() {
                   onClick={() => document.getElementById('tab-login').click()}>Login here</button>
               </p>
             </div>
+
           </div>
           <p className="text-center text-white/25 text-xs mt-5">© 2026 SupaMoto Zambia · Staff Auction System</p>
         </div>
@@ -610,48 +662,104 @@ export default function App() {
     );
   }
 
-  // NO SCHEDULE SET — only show after settings have loaded, admin bypasses this
-  if (!settingsLoading && user?.role !== 'admin' && !appSettings?.auctionStart && !appSettings?.auctionEnd) {
-    return (
-      <div style={{ fontFamily: "'Poppins', sans-serif", backgroundColor: colors.cornsilk }}
-        className="min-h-screen flex items-center justify-center p-6">
-        <AlertToast alerts={alerts} colors={colors} />
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 border-t-8 text-center"
-          style={{ borderColor: colors.mossGreen }}>
-          <div className="flex justify-center mb-4">
-            <div style={{ backgroundColor: colors.mossGreen }} className="p-4 rounded-full shadow-md">
-              <Trophy className="w-10 h-10 text-white" />
-            </div>
-          </div>
-          <h1 className="text-2xl font-bold mb-3" style={{ color: colors.mossGreen }}>Auction Coming Soon</h1>
-          <p className="text-gray-600 mb-6">
-            The auction has not been scheduled yet. Please check back later or contact the admin for more information.
-          </p>
-          <button onClick={handleLogout} style={{ backgroundColor: colors.mossGreen }}
-            className="w-full text-white font-bold py-3 rounded-xl shadow-md hover:opacity-90 transition-opacity">
-            Logout
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // AUCTION CLOSED LOCKOUT
+  // AUCTION CLOSED — SHOW MY RESULTS
   if (user?.role !== 'admin' && isAuctionClosed()) {
+    const myWonBids = items.filter(i => i.topBidder === user.name && i.type !== 'shop');
+    const myPurchases = items
+      .filter(i => i.type === 'shop' && i.purchases?.some(p => p.buyer === user.name))
+      .map(i => ({ ...i, myPurchase: i.purchases.find(p => p.buyer === user.name) }));
+    const totalOwed = [
+      ...myWonBids.map(i => Number(i.currentBid) || 0),
+      ...myPurchases.map(i => Number(i.price) || 0),
+    ].reduce((sum, v) => sum + v, 0);
+    const fmtPayment = (pm) => pm === 'mobile_money' ? 'Mobile Money' : 'Payroll';
+
     return (
-      <div style={{ fontFamily: "'Poppins', sans-serif", backgroundColor: colors.cornsilk }} className="min-h-screen flex items-center justify-center p-6">
+      <div style={{ fontFamily: "'Poppins', sans-serif", backgroundColor: colors.cornsilk }} className="min-h-screen p-4 md:p-8">
         <AlertToast alerts={alerts} colors={colors} />
-        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 border-t-8 text-center" style={{ borderColor: colors.auburn }}>
-          <div className="flex justify-center mb-4">
-            <div style={{ backgroundColor: colors.auburn }} className="p-4 rounded-full shadow-md">
-              <Lock className="w-10 h-10 text-white" />
+
+        {/* Header */}
+        <div className="max-w-2xl mx-auto">
+          <div className="bg-white rounded-2xl shadow-lg border-t-8 p-6 mb-6 text-center" style={{ borderColor: colors.auburn }}>
+            <div className="flex justify-center mb-3">
+              <div style={{ backgroundColor: colors.auburn }} className="p-4 rounded-full shadow-md">
+                <Trophy className="w-10 h-10 text-white" />
+              </div>
             </div>
+            <h1 className="text-2xl font-bold mb-1" style={{ color: colors.auburn }}>Auction Closed</h1>
+            <p className="text-gray-500 text-sm mb-4">Here's a summary of your wins and purchases, <strong>{user.name}</strong>.</p>
+            {totalOwed > 0 && (
+              <div className="inline-block px-6 py-3 rounded-xl font-bold text-white text-lg shadow" style={{ backgroundColor: colors.mossGreen }}>
+                Total Owed: K{totalOwed.toLocaleString()}
+              </div>
+            )}
           </div>
-          <h1 className="text-2xl font-bold mb-3" style={{ color: colors.auburn }}>Auction Closed</h1>
-          <p className="text-gray-600 mb-6">This auction has ended. Bidder access is now locked. Please contact the admin if you need help.</p>
+
+          {/* Won Bids */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 mb-5 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+              <span className="text-base">🏆</span>
+              <h2 className="font-bold text-gray-700">Auction Wins</h2>
+              <span className="ml-auto bg-yellow-100 text-yellow-700 text-xs font-bold px-2 py-0.5 rounded-full">{myWonBids.length}</span>
+            </div>
+            {myWonBids.length === 0 ? (
+              <p className="text-center text-gray-400 py-8 text-sm">You didn't win any auction bids.</p>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {myWonBids.map((item, idx) => {
+                  const winnerBid = [...(item.bids || [])].sort((a, b) => b.amount - a.amount).find(b => b.bidder === user.name);
+                  return (
+                    <div key={item.id || idx} className="flex items-center gap-3 px-5 py-4">
+                      <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0 text-gray-400 font-bold text-sm">{idx + 1}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-gray-800 truncate">{item.name}</p>
+                        <p className="text-xs text-gray-400">{item.category} · {fmtPayment(winnerBid?.payment_method)}</p>
+                      </div>
+                      <span className="font-bold text-sm flex-shrink-0" style={{ color: colors.mossGreen }}>K{(Number(item.currentBid) || 0).toLocaleString()}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Fixed Price Purchases */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 mb-5 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+              <span className="text-base">🛒</span>
+              <h2 className="font-bold text-gray-700">Fixed Price Purchases</h2>
+              <span className="ml-auto bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded-full">{myPurchases.length}</span>
+            </div>
+            {myPurchases.length === 0 ? (
+              <p className="text-center text-gray-400 py-8 text-sm">You didn't make any fixed price purchases.</p>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {myPurchases.map((item, idx) => (
+                  <div key={item.id || idx} className="flex items-center gap-3 px-5 py-4">
+                    <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0 text-gray-400 font-bold text-sm">{idx + 1}</div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-gray-800 truncate">{item.name}</p>
+                      <p className="text-xs text-gray-400">{item.category} · {fmtPayment(item.myPurchase?.payment_method)}</p>
+                    </div>
+                    <span className="font-bold text-sm flex-shrink-0 text-blue-700">K{(Number(item.price) || 0).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* No results at all */}
+          {myWonBids.length === 0 && myPurchases.length === 0 && (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center mb-5">
+              <p className="text-4xl mb-3">😔</p>
+              <p className="font-semibold text-gray-600">No wins or purchases this auction.</p>
+              <p className="text-sm text-gray-400 mt-1">Better luck next time!</p>
+            </div>
+          )}
+
           <button onClick={handleLogout} style={{ backgroundColor: colors.mossGreen }}
             className="w-full text-white font-bold py-3 rounded-xl shadow-md hover:opacity-90 transition-opacity">
-            Back to Login
+            Sign Out
           </button>
         </div>
       </div>
@@ -686,7 +794,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ADMIN PAGE */}
+        {/* ── ADMIN PAGE ── */}
         {user.role === 'admin' && currentPage === 'admin' && (
           <ErrorBoundary>
             <Suspense fallback={<div className="p-8 text-center text-gray-500 font-bold animate-pulse">Loading Admin Tools...</div>}>
@@ -708,7 +816,7 @@ export default function App() {
           </ErrorBoundary>
         )}
 
-        {/* AUCTION PAGE */}
+        {/* ── AUCTION PAGE ── */}
         {currentPage === 'auction' && (
           <>
             {user.role === 'user' && (
