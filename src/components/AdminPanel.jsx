@@ -21,18 +21,27 @@ export default function AdminPanel({
     const shopItems  = items.filter(item => item.type === 'shop' && item.purchases?.length > 0);
     if (!bidWinners.length && !shopItems.length) return showAlert?.("No auction data to export yet.", "error");
 
-    let csvContent = "Type,Item Name,Category,Person,Amount (K)\n";
+    const fmtPayment = (pm) => pm === 'mobile_money' ? 'Mobile Money' : 'Payroll';
+
+    let csvContent = "Type,Item Name,Category,Person,Amount (K),Payment Method\n";
+
     bidWinners.forEach(item => {
       const name   = (item.name || "Unnamed").replace(/,/g, "");
       const winner = (item.topBidder || "").replace(/,/g, "");
       const price  = item.currentBid || 0;
-      csvContent += `"Bid Winner","${name}","${item.category || ''}","${winner}",${price}\n`;
+      const winnerBid = [...(item.bids || [])]
+        .sort((a, b) => b.amount - a.amount)
+        .find(b => b.bidder === item.topBidder);
+      const payment = fmtPayment(winnerBid?.payment_method);
+      csvContent += `"Bid Winner","${name}","${item.category || ''}","${winner}",${price},"${payment}"\n`;
     });
+
     shopItems.forEach(item => {
       const name = (item.name || "Unnamed").replace(/,/g, "");
       (item.purchases || []).forEach(p => {
         const buyer = (p.buyer || "").replace(/,/g, "");
-        csvContent += `"Fixed Price","${name}","${item.category || ''}","${buyer}",${item.price || 0}\n`;
+        const payment = fmtPayment(p.payment_method);
+        csvContent += `"Fixed Price","${name}","${item.category || ''}","${buyer}",${item.price || 0},"${payment}"\n`;
       });
     });
 
@@ -52,7 +61,6 @@ export default function AdminPanel({
     if (!auctionStartInput || !auctionEndInput)
       return showAlert?.('Please set both start and end times.', 'error');
 
-    // Fix: append :00 seconds so Date parsing is consistent across all browsers (Safari etc.)
     const startTs = new Date(auctionStartInput + ':00').getTime();
     const endTs   = new Date(auctionEndInput   + ':00').getTime();
 
@@ -190,34 +198,46 @@ export default function AdminPanel({
                 <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Winner</th>
                 <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Item Won</th>
                 <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Winning Price</th>
+                <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Payment</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {items.filter(i => i.topBidder).length === 0 ? (
-                <tr><td colSpan={4} className="text-center py-12 text-gray-400">No auction winners yet</td></tr>
+                <tr><td colSpan={5} className="text-center py-12 text-gray-400">No auction winners yet</td></tr>
               ) : (
-                items.filter(i => i.topBidder).map((item, idx) => (
-                  <tr key={item.id || idx} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-5 py-3 text-gray-400 font-medium">{idx + 1}</td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white" style={{ backgroundColor: colors.tangerine }}>
-                          {item.topBidder?.charAt(0).toUpperCase()}
+                items.filter(i => i.topBidder).map((item, idx) => {
+                  const winnerBid = [...(item.bids || [])]
+                    .sort((a, b) => b.amount - a.amount)
+                    .find(b => b.bidder === item.topBidder);
+                  const payment = winnerBid?.payment_method === 'mobile_money' ? 'Mobile Money' : 'Payroll';
+                  return (
+                    <tr key={item.id || idx} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-5 py-3 text-gray-400 font-medium">{idx + 1}</td>
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white" style={{ backgroundColor: colors.tangerine }}>
+                            {item.topBidder?.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="font-medium text-gray-800">{item.topBidder}</span>
                         </div>
-                        <span className="font-medium text-gray-800">{item.topBidder}</span>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3 text-gray-600">{item.name}</td>
-                    <td className="px-5 py-3 font-bold" style={{ color: colors.mossGreen }}>K{(Number(item.currentBid) || 0).toLocaleString()}</td>
-                  </tr>
-                ))
+                      </td>
+                      <td className="px-5 py-3 text-gray-600">{item.name}</td>
+                      <td className="px-5 py-3 font-bold" style={{ color: colors.mossGreen }}>K{(Number(item.currentBid) || 0).toLocaleString()}</td>
+                      <td className="px-5 py-3">
+                        <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
+                          winnerBid?.payment_method === 'mobile_money'
+                            ? 'bg-orange-100 text-orange-700'
+                            : 'bg-green-100 text-green-700'
+                        }`}>{payment}</span>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </section>
-
-
 
       {/* --- FIXED PRICE PURCHASES TABLE --- */}
       <section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-6">
@@ -237,31 +257,42 @@ export default function AdminPanel({
                 <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Buyer</th>
                 <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Item</th>
                 <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Price</th>
+                <th className="text-left px-5 py-3 text-xs font-bold text-gray-400 uppercase tracking-wider">Payment</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {items.filter(i => i.type === 'shop' && i.purchases?.length > 0).flatMap(item =>
-                (item.purchases || []).map((p, pi) => ({ ...p, itemName: item.name, price: item.price, category: item.category, key: item.id + '-' + pi }))
+                (item.purchases || []).map((p, pi) => ({ ...p, itemName: item.name, price: item.price, key: item.id + '-' + pi }))
               ).length === 0 ? (
-                <tr><td colSpan={4} className="text-center py-12 text-gray-400">No fixed price purchases yet</td></tr>
+                <tr><td colSpan={5} className="text-center py-12 text-gray-400">No fixed price purchases yet</td></tr>
               ) : (
                 items.filter(i => i.type === 'shop' && i.purchases?.length > 0).flatMap(item =>
                   (item.purchases || []).map((p, pi) => ({ ...p, itemName: item.name, price: item.price, key: item.id + '-' + pi }))
-                ).map((row, idx) => (
-                  <tr key={row.key} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-5 py-3 text-gray-400 font-medium">{idx + 1}</td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white bg-blue-500">
-                          {(row.buyer || '?').charAt(0).toUpperCase()}
+                ).map((row, idx) => {
+                  const payment = row.payment_method === 'mobile_money' ? 'Mobile Money' : 'Payroll';
+                  return (
+                    <tr key={row.key} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-5 py-3 text-gray-400 font-medium">{idx + 1}</td>
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white bg-blue-500">
+                            {(row.buyer || '?').charAt(0).toUpperCase()}
+                          </div>
+                          <span className="font-medium text-gray-800">{row.buyer || 'Unknown'}</span>
                         </div>
-                        <span className="font-medium text-gray-800">{row.buyer || 'Unknown'}</span>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3 text-gray-600">{row.itemName}</td>
-                    <td className="px-5 py-3 font-bold text-blue-700">K{(Number(row.price) || 0).toLocaleString()}</td>
-                  </tr>
-                ))
+                      </td>
+                      <td className="px-5 py-3 text-gray-600">{row.itemName}</td>
+                      <td className="px-5 py-3 font-bold text-blue-700">K{(Number(row.price) || 0).toLocaleString()}</td>
+                      <td className="px-5 py-3">
+                        <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
+                          row.payment_method === 'mobile_money'
+                            ? 'bg-orange-100 text-orange-700'
+                            : 'bg-green-100 text-green-700'
+                        }`}>{payment}</span>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
