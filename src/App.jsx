@@ -76,41 +76,42 @@ const calculateTimeLeft = (start, end) => {
 export default function App() {
   const colors = { tangerine: '#F58202', mossGreen: '#336021', auburn: '#9E2A2B', cornsilk: '#F9EDCC' };
 
-  const [authLoading, setAuthLoading]       = useState(true);
-  const [user, setUser]                     = useState(null);
-  const [currentPage, setCurrentPage]       = useState('auction');
-  const [dbUsers, setDbUsers]               = useState([]);
-  const [items, setItems]                   = useState([]);
-  const [alerts, setAlerts]                 = useState([]);
-  const [bidInputs, setBidInputs]           = useState({});
-  const [searchQuery, setSearchQuery]       = useState('');
+  const [authLoading, setAuthLoading]           = useState(true);
+  const [settingsLoading, setSettingsLoading]   = useState(true); // ← fix: wait for settings before showing "Coming Soon"
+  const [user, setUser]                         = useState(null);
+  const [currentPage, setCurrentPage]           = useState('auction');
+  const [dbUsers, setDbUsers]                   = useState([]);
+  const [items, setItems]                       = useState([]);
+  const [alerts, setAlerts]                     = useState([]);
+  const [bidInputs, setBidInputs]               = useState({});
+  const [searchQuery, setSearchQuery]           = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  const [expandedImage, setExpandedImage]   = useState(null);
-  const [appSettings, setAppSettings]       = useState({ loginBg: null });
-  const [bgPreview, setBgPreview]           = useState(null);
-  const [categories, setCategories]         = useState(['Cookstoves', 'Fuel', 'Solar', 'General']);
+  const [expandedImage, setExpandedImage]       = useState(null);
+  const [appSettings, setAppSettings]           = useState({ loginBg: null });
+  const [bgPreview, setBgPreview]               = useState(null);
+  const [categories, setCategories]             = useState(['Cookstoves', 'Fuel', 'Solar', 'General']);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [newCategoryName, setNewCategoryName]   = useState('');
-  const [newItem, setNewItem]               = useState({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' });
-  const [imagePreview, setImagePreview]     = useState(null);
-  const [imagePreview2, setImagePreview2]   = useState(null);
-  const [editingItemId, setEditingItemId]   = useState(null);
-  const [timeLeft, setTimeLeft]             = useState('');
+  const [newItem, setNewItem]                   = useState({ name: '', desc: '', startPrice: '', category: '', image: null, image2: null, isFaulty: false, faultDescription: '' });
+  const [imagePreview, setImagePreview]         = useState(null);
+  const [imagePreview2, setImagePreview2]       = useState(null);
+  const [editingItemId, setEditingItemId]       = useState(null);
+  const [timeLeft, setTimeLeft]                 = useState('');
   const [auctionStartInput, setAuctionStartInput] = useState('');
   const [auctionEndInput, setAuctionEndInput]     = useState('');
 
   // Login state
-  const [loginEmail, setLoginEmail]         = useState('');
-  const [loginPass, setLoginPass]           = useState('');
-  const [loginLoading, setLoginLoading]     = useState(false);
+  const [loginEmail, setLoginEmail]     = useState('');
+  const [loginPass, setLoginPass]       = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
 
-  // Register state — split first/last like original
-  const [regFirstName, setRegFirstName]     = useState('');
-  const [regLastName, setRegLastName]       = useState('');
-  const [regEmail, setRegEmail]             = useState('');
-  const [regPass, setRegPass]               = useState('');
-  const [regPassConfirm, setRegPassConfirm] = useState('');
-  const [regLoading, setRegLoading]         = useState(false);
+  // Register state
+  const [regFirstName, setRegFirstName]       = useState('');
+  const [regLastName, setRegLastName]         = useState('');
+  const [regEmail, setRegEmail]               = useState('');
+  const [regPass, setRegPass]                 = useState('');
+  const [regPassConfirm, setRegPassConfirm]   = useState('');
+  const [regLoading, setRegLoading]           = useState(false);
 
   // --- App start ---
   useEffect(() => {
@@ -132,15 +133,21 @@ export default function App() {
       if (mounted && data) setDbUsers(data);
     };
 
-    // Settings are public (RLS allows anon read), so we can subscribe immediately
+    // Settings are public — subscribe immediately, mark loaded once data arrives
     const unsubSettings = subscribeToSettings((data) => {
-      if (mounted && data) setAppSettings(data);
+      if (mounted) {
+        if (data) setAppSettings(data);
+        setSettingsLoading(false); // ← mark settings as loaded regardless of value
+      }
     });
 
-    // Auth-gated work: fetch items, load users, and set up realtime items
-    // subscription AFTER we know who the user is. This prevents the RLS race
-    // that caused items to appear empty on load.
+    // Safety timeout for settings — if Supabase takes too long, stop blocking
+    const settingsTimeout = setTimeout(() => {
+      if (mounted) setSettingsLoading(false);
+    }, 5000);
+
     let unsubItems = () => {};
+    let currentUserId = null;
 
     const initAuth = async () => {
       try {
@@ -159,19 +166,14 @@ export default function App() {
         if (mounted) setAuthLoading(false);
       }
     };
-    // Hard timeout — if auth takes >6s, stop spinner regardless
+
     const authTimeout = setTimeout(() => { if (mounted) setAuthLoading(false); }, 6000);
     initAuth().finally(() => clearTimeout(authTimeout));
 
-    // Handles sign-in / sign-out AFTER mount. Skips INITIAL_SESSION internally
-    // so it doesn't race initAuth.
-    // Guard: only re-run setup if auth state actually changes (prevents loop
-    // when onAuthChange fires after initAuth already set the user).
-    let currentUserId = null;
     const unsubAuth = onAuthChange((profile) => {
       if (!mounted) return;
       const incomingId = profile?.id ?? null;
-      if (incomingId === currentUserId) return; // no change — skip
+      if (incomingId === currentUserId) return;
       currentUserId = incomingId;
       setUser(profile);
       if (profile) {
@@ -189,6 +191,7 @@ export default function App() {
     return () => {
       mounted = false;
       clearTimeout(authTimeout);
+      clearTimeout(settingsTimeout);
       document.head.removeChild(link);
       unsubAuth();
       unsubItems();
@@ -228,7 +231,8 @@ export default function App() {
     return () => clearInterval(t);
   }, [appSettings?.auctionStart, appSettings?.auctionEnd]);
 
-  const isAuctionClosed = () => appSettings?.auctionEnd && Date.now() >= appSettings.auctionEnd;
+  const isAuctionClosed  = () => appSettings?.auctionEnd   && Date.now() >= appSettings.auctionEnd;
+  const isAuctionStarted = () => appSettings?.auctionStart && Date.now() >= appSettings.auctionStart;
 
   const filteredItems = useMemo(() => items.filter(i => {
     const matchesSearch = (i.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -260,8 +264,6 @@ export default function App() {
     try {
       const profile = await signIn(email, pass);
       setUser(profile);
-      // Kick off items fetch immediately so user sees content without waiting
-      // for onAuthChange round-trip.
       fetchItems().then(setItems).catch(console.error);
       showAlert(`Welcome back, ${profile.name}! 👋`, 'success');
     } catch (err) {
@@ -285,15 +287,11 @@ export default function App() {
     const name = `${firstName} ${lastName}`;
     const existing = dbUsers.find(u => u.name.toLowerCase() === name.toLowerCase());
     if (existing) return showAlert('That name is already registered. Please contact admin.', 'error');
-    completeRegistration({ name, email, password: pass });
-  };
-
-  const completeRegistration = async ({ name, email, password }) => {
     setRegLoading(true);
     try {
-      const profile = await signUp(name, email, password);
+      const profile = await signUp(name, email, pass);
       setUser(profile);
-      showAlert(`Account created! Welcome, ${name.split(' ')[0]}! 🎉`, 'success');
+      showAlert(`Account created! Welcome, ${firstName}! 🎉`, 'success');
       setRegFirstName(''); setRegLastName(''); setRegEmail(''); setRegPass(''); setRegPassConfirm('');
     } catch (err) {
       showAlert(err.message || 'Error creating account. Please try again.', 'error');
@@ -303,6 +301,7 @@ export default function App() {
 
   // --- Place Bid ---
   const placeBid = async (item, paymentMethod = 'payroll') => {
+    if (user?.role !== 'admin' && !isAuctionStarted()) return showAlert('Bidding opens when the auction starts.', 'error');
     if (user?.role !== 'admin' && isAuctionClosed()) return showAlert('The auction has closed. Bidding is locked.', 'error');
     const amt = parseFloat(bidInputs[item.id]);
     if (isNaN(amt) || amt <= 0) return showAlert('Please enter a valid bid amount.', 'error');
@@ -316,6 +315,7 @@ export default function App() {
   // --- Buy Shop Item ---
   const buyItem = async (item, paymentMethod = 'payroll') => {
     if (!user) return;
+    if (user?.role !== 'admin' && !isAuctionStarted()) return showAlert('Shop opens when the auction starts.', 'error');
     if (user?.role !== 'admin' && isAuctionClosed()) return showAlert('The auction has closed.', 'error');
     const alreadyBought = (item.purchases || []).some(p => p.buyer === user.name);
     if (alreadyBought) return showAlert('You have already reserved this item.', 'error');
@@ -361,7 +361,6 @@ export default function App() {
   const handleBgUpload = (e) => {
     const file = e.target.files[0];
     if (!file || file.size > 500 * 1024) return showAlert('Background max 500KB.', 'error');
-    // Keep the File for upload on save, and a preview URL for immediate display
     const previewUrl = URL.createObjectURL(file);
     setBgPreview({ file, preview: previewUrl });
   };
@@ -413,7 +412,7 @@ export default function App() {
     setUser(null); setLoginEmail(''); setLoginPass(''); setCurrentPage('auction');
   };
 
-  // ── Loading screen ────────────────────────────────────────────────────────
+  // ── Loading screen (auth OR settings still loading) ───────────────────────
   if (authLoading) {
     return (
       <div style={{ background: 'linear-gradient(135deg, #336021 0%, #1a3a10 50%, #9E2A2B 100%)' }}
@@ -452,7 +451,6 @@ export default function App() {
 
           {/* Card */}
           <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
-
             {/* Tab switcher */}
             <div className="flex">
               <button id="tab-login"
@@ -487,7 +485,7 @@ export default function App() {
               </button>
             </div>
 
-            {/* ── LOGIN PANEL ── */}
+            {/* LOGIN PANEL */}
             <div id="panel-login" className="p-7">
               <p className="text-gray-500 text-sm mb-5 text-center">Welcome back! Enter your details to access the auction.</p>
               <form onSubmit={handleLogin} className="space-y-4">
@@ -511,8 +509,6 @@ export default function App() {
                       className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:border-transparent transition-all bg-gray-50 focus:bg-white" />
                   </div>
                 </div>
-
-                {/* Acknowledgement checkbox */}
                 <div className="rounded-xl border border-orange-200 bg-orange-50 p-3">
                   <label className="flex items-start gap-3 cursor-pointer">
                     <input type="checkbox" required className="mt-0.5 w-4 h-4 cursor-pointer accent-green-700 shrink-0" />
@@ -521,7 +517,6 @@ export default function App() {
                     </span>
                   </label>
                 </div>
-
                 <button type="submit" disabled={loginLoading} style={{ backgroundColor: colors.mossGreen }}
                   className="w-full py-3.5 text-white font-bold rounded-xl shadow-md hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2">
                   {loginLoading
@@ -536,12 +531,10 @@ export default function App() {
               </p>
             </div>
 
-            {/* ── REGISTER PANEL ── */}
+            {/* REGISTER PANEL */}
             <div id="panel-register" className="p-7" style={{ display: 'none' }}>
               <p className="text-gray-500 text-sm mb-5 text-center">First time? Create your account to start bidding.</p>
               <form onSubmit={handleRegister} className="space-y-3">
-
-                {/* First + Last Name */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">First Name</label>
@@ -562,8 +555,6 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-
-                {/* Company Email */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Company Email</label>
                   <div className="relative">
@@ -575,8 +566,6 @@ export default function App() {
                       className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 transition-all bg-gray-50 focus:bg-white" />
                   </div>
                 </div>
-
-                {/* Password */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Password</label>
                   <div className="relative">
@@ -586,8 +575,6 @@ export default function App() {
                       className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 transition-all bg-gray-50 focus:bg-white" />
                   </div>
                 </div>
-
-                {/* Re-enter Password */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5">Re-enter Password</label>
                   <div className="relative">
@@ -603,7 +590,6 @@ export default function App() {
                   {regPassConfirm && regPassConfirm !== regPass && <p className="text-xs text-red-500 mt-1 font-medium">Passwords do not match</p>}
                   {regPassConfirm && regPassConfirm === regPass  && <p className="text-xs text-green-600 mt-1 font-medium">✓ Passwords match</p>}
                 </div>
-
                 <button type="submit" disabled={regLoading} style={{ backgroundColor: colors.tangerine }}
                   className="w-full py-3.5 text-white font-bold rounded-xl shadow-md hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2 mt-1">
                   {regLoading
@@ -617,9 +603,34 @@ export default function App() {
                   onClick={() => document.getElementById('tab-login').click()}>Login here</button>
               </p>
             </div>
-
           </div>
           <p className="text-center text-white/25 text-xs mt-5">© 2026 SupaMoto Zambia · Staff Auction System</p>
+        </div>
+      </div>
+    );
+  }
+
+  // NO SCHEDULE SET — only show after settings have loaded, admin bypasses this
+  if (!settingsLoading && user?.role !== 'admin' && !appSettings?.auctionStart && !appSettings?.auctionEnd) {
+    return (
+      <div style={{ fontFamily: "'Poppins', sans-serif", backgroundColor: colors.cornsilk }}
+        className="min-h-screen flex items-center justify-center p-6">
+        <AlertToast alerts={alerts} colors={colors} />
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 border-t-8 text-center"
+          style={{ borderColor: colors.mossGreen }}>
+          <div className="flex justify-center mb-4">
+            <div style={{ backgroundColor: colors.mossGreen }} className="p-4 rounded-full shadow-md">
+              <Trophy className="w-10 h-10 text-white" />
+            </div>
+          </div>
+          <h1 className="text-2xl font-bold mb-3" style={{ color: colors.mossGreen }}>Auction Coming Soon</h1>
+          <p className="text-gray-600 mb-6">
+            The auction has not been scheduled yet. Please check back later or contact the admin for more information.
+          </p>
+          <button onClick={handleLogout} style={{ backgroundColor: colors.mossGreen }}
+            className="w-full text-white font-bold py-3 rounded-xl shadow-md hover:opacity-90 transition-opacity">
+            Logout
+          </button>
         </div>
       </div>
     );
@@ -675,7 +686,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ── ADMIN PAGE ── */}
+        {/* ADMIN PAGE */}
         {user.role === 'admin' && currentPage === 'admin' && (
           <ErrorBoundary>
             <Suspense fallback={<div className="p-8 text-center text-gray-500 font-bold animate-pulse">Loading Admin Tools...</div>}>
@@ -697,7 +708,7 @@ export default function App() {
           </ErrorBoundary>
         )}
 
-        {/* ── AUCTION PAGE ── */}
+        {/* AUCTION PAGE */}
         {currentPage === 'auction' && (
           <>
             {user.role === 'user' && (
